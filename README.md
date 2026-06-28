@@ -136,6 +136,14 @@ For local daemons (Unix socket or no explicit host) paths are expanded locally: 
 
 `-p` flag → `default_profile` in config → auto-select if only one profile is defined
 
+### Session persistence
+
+Every sandbox automatically gets a Docker named volume (e.g. `go-dev-sessions`) mounted at `/data/opencode` inside the container. The `OPENCODE_DATA_DIRECTORY` environment variable is set automatically so opencode writes its SQLite database and conversation history there.
+
+- The volume is created automatically on the first run.
+- It is reused when you recreate the sandbox.
+- It is **not** deleted by `opencode-sandbox rm` — sessions survive container removal.
+
 ## Examples
 
 Ready-to-use configs are in [`examples/`](examples/):
