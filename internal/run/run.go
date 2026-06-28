@@ -24,6 +24,11 @@ import (
 // containerPort is the port opencode serves on inside the container.
 const containerPort nat.Port = "4096/tcp"
 
+// opencodeContainerDataDir is the in-container path where opencode stores its
+// SQLite database and session data. A Docker named volume is mounted here so
+// sessions survive container removal.
+const opencodeContainerDataDir = "/data/opencode"
+
 var entrypoint = []string{"opencode"}
 var cmd = []string{"serve", "--hostname=0.0.0.0", "--port=4096"}
 
@@ -33,6 +38,7 @@ type Result struct {
 	Name        string
 	HostPort    int
 	Binds       []string // resolved bind specs (source:target[:ro]) passed to the daemon
+	Volume      string   // named Docker volume used for session persistence
 }
 
 // Start creates and starts a container named name running image.
@@ -41,6 +47,9 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
 	}
+	// Force opencode to write its SQLite database and sessions to the
+	// persistent Docker volume regardless of its default path.
+	envSlice = append(envSlice, "OPENCODE_DATA_DIRECTORY="+opencodeContainerDataDir)
 
 	// Bind mounts use HostConfig.Binds (the "source:target[:ro]" string form
 	// used by `docker run -v`) so that Docker Desktop's VirtioFS / gRPC-FUSE
@@ -51,6 +60,17 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 	if err != nil {
 		return nil, err
 	}
+
+	// Every sandbox gets a named volume for opencode session data.
+	// Docker creates the volume automatically if it does not exist, and
+	// reuses it on subsequent runs. The volume is NOT removed when the
+	// container is removed.
+	volumeName := cfg.Name + "-sessions"
+	otherMounts = append(otherMounts, mount.Mount{
+		Type:   mount.TypeVolume,
+		Source: volumeName,
+		Target: opencodeContainerDataDir,
+	})
 
 	bindIP := cfg.Run.Port.Bind
 	if bindIP == "" {
@@ -112,6 +132,7 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 		Name:        actualName,
 		HostPort:    port,
 		Binds:       binds,
+		Volume:      volumeName,
 	}, nil
 }
 

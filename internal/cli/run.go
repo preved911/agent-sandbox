@@ -85,6 +85,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			for _, b := range res.Binds {
 				fmt.Fprintf(out, "mount: %s\n", b)
 			}
+			fmt.Fprintf(out, "volume: %s\n", res.Volume)
 
 			host := cfg.Docker.AttachHost
 			if host == "" {
