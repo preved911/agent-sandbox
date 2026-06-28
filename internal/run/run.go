@@ -25,9 +25,10 @@ import (
 const containerPort nat.Port = "4096/tcp"
 
 // opencodeContainerDataDir is the in-container path where opencode stores its
-// SQLite database and session data. A Docker named volume is mounted here so
-// sessions survive container removal.
-const opencodeContainerDataDir = "/data/opencode"
+// SQLite database and session data. The official opencode binary writes to
+// ~/.local/share/opencode/ regardless of the OPENCODE_DATA_DIRECTORY env var,
+// so we mount the Docker named volume directly at that path.
+const opencodeContainerDataDir = "/root/.local/share/opencode"
 
 var entrypoint = []string{"opencode"}
 var cmd = []string{"serve", "--hostname=0.0.0.0", "--port=4096"}
@@ -47,9 +48,6 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
 	}
-	// Force opencode to write its SQLite database and sessions to the
-	// persistent Docker volume regardless of its default path.
-	envSlice = append(envSlice, "OPENCODE_DATA_DIRECTORY="+opencodeContainerDataDir)
 
 	// Bind mounts use HostConfig.Binds (the "source:target[:ro]" string form
 	// used by `docker run -v`) so that Docker Desktop's VirtioFS / gRPC-FUSE
