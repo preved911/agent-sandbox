@@ -65,7 +65,10 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 	// Docker creates the volume automatically if it does not exist, and
 	// reuses it on subsequent runs. The volume is NOT removed when the
 	// container is removed.
-	volumeName := cfg.Name + "-sessions"
+	//
+	// The volume name always matches the container name so that sessions
+	// are tied to the specific sandbox instance.
+	volumeName := name + "-sessions"
 	otherMounts = append(otherMounts, mount.Mount{
 		Type:   mount.TypeVolume,
 		Source: volumeName,

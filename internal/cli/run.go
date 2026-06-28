@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -76,7 +78,12 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 			defer cli.Close()
 
-			res, err := run.Start(ctx, cli, cfg, image, nameOverride)
+			name := nameOverride
+			if name == "" {
+				name = generateName(cfg.Name)
+			}
+
+			res, err := run.Start(ctx, cli, cfg, image, name)
 			if err != nil {
 				return err
 			}
@@ -95,7 +102,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&nameOverride, "name", "", "container name (default: random)")
+	cmd.Flags().StringVar(&nameOverride, "name", "", "container name (default: <profile>-<random>)")
 	cmd.Flags().BoolVar(&noBuild, "no-build", false, "skip the build step (image must already exist)")
 	cmd.Flags().BoolVar(&pull, "pull", false, "pass --pull to docker build")
 	cmd.Flags().StringArrayVarP(&envOverrides, "env", "e", nil, "set or override an env var (KEY=VALUE); repeatable")
@@ -134,4 +141,15 @@ func parseMountFlag(s string) (config.Mount, error) {
 		m.ReadOnly = true
 	}
 	return m, nil
+}
+
+// generateName creates a deterministic-looking container name from a profile
+// name and a short random suffix, e.g. "go-dev-a3f7b2".
+func generateName(profile string) string {
+	b := make([]byte, 3)
+	if _, err := rand.Read(b); err != nil {
+		// Fall back to a static suffix if crypto/rand fails.
+		return profile + "-sandbox"
+	}
+	return profile + "-" + hex.EncodeToString(b)
 }
