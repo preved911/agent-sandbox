@@ -138,7 +138,7 @@ For local daemons (Unix socket or no explicit host) paths are expanded locally: 
 
 ### Session persistence
 
-Every sandbox automatically gets a Docker named volume (e.g. `go-dev-sessions`) mounted at `/data/opencode` inside the container. The `OPENCODE_DATA_DIRECTORY` environment variable is set automatically so opencode writes its SQLite database and conversation history there.
+Every sandbox automatically gets a Docker named volume (e.g. `go-dev-sessions`) mounted at `/root/.local/share/opencode` inside the container. This is where the official opencode binary stores its SQLite database and conversation history.
 
 - The volume is created automatically on the first run.
 - It is reused when you recreate the sandbox.
