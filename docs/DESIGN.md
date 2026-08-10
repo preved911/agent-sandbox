@@ -239,7 +239,82 @@ opencode stores sessions under its default data directory. To keep sessions dura
 
 ### Configurable mounts (from profile)
 
-User-defined mounts in the profile's `run.mounts` are applied on top, with Docker-native semantics (`source`, `target`, `readonly`). SSH agent forwarding and `.gitconfig` mounts are documented as recipes (§11), not hard-coded.
+User-defined mounts in the profile's `run.mounts` are applied on top, with Docker-native semantics (`source`, `target`, `readonly`).
+
+### Credential & identity forwarding
+
+Agents often need git access (`git push`, `git pull`, `gh pr create`). Credentials live on the host; forwarding them uses the **same `run.mounts` and `run.env` mechanism as everything else** — no special-cased flags or platform-detection code.
+
+**SSH agent forwarding** — mount the agent socket, set the env var:
+
+```yaml
+run:
+  env:
+    SSH_AUTH_SOCK: /ssh-agent
+  mounts:
+    - source: "${SSH_AUTH_SOCK}"      # host socket path
+      target: /ssh-agent              # fixed path inside container
+      readonly: true
+```
+
+Private keys never touch the container's disk — the agent signs challenges, keys stay on host. Platform-specific socket paths (`/run/host-services/ssh-auth.sock` on Docker Desktop for macOS, `$SSH_AUTH_SOCK` on Linux) are just the `source` value the user sets; the wrapper doesn't need to know.
+
+**Git config** — bind-mount `.gitconfig` read-only (it's config, not secrets):
+
+```yaml
+run:
+  mounts:
+    - source: ~/.gitconfig
+      target: /root/.gitconfig
+      readonly: true
+```
+
+**Git HTTPS credentials** — forward tokens via `run.env`, then run `gh auth setup-git` inside the container to wire the token into git's credential helper:
+
+```yaml
+run:
+  env:
+    GH_TOKEN: "${GH_TOKEN}"           # or GITHUB_TOKEN, passed from host env
+```
+
+Credential stores (osxkeychain, libsecret) cannot cross the container boundary — token forwarding is the clean path.
+
+**Security note:** SSH agent forwarding authorizes the container to use your SSH identity for the session lifetime. If the agent runs untrusted code, that code could sign SSH challenges during the session. The firewall + container boundary contains the blast radius — but this is a trust decision the user makes by choosing to forward the socket.
+
+---
+
+### macOS shared-paths validation
+
+Docker Desktop and Colima on macOS can only bind-mount paths listed in their **shared-paths** (File Sharing) configuration. A project outside the shared list produces a **silently empty mount** — the agent sees an empty directory, leading to confusion and wasted work.
+
+**Pre-flight check (macOS only, no-op on Linux):**
+
+On `run`/`create`, before starting the stack, the wrapper verifies `<cwd>` is covered by the runtime's shared-paths:
+
+- **Docker Desktop:** reads `~/Library/Group Containers/group.com.docker/settings.json`, field `filesharingDirectories`. Checks if `<cwd>` falls under any entry.
+- **Colima:** reads the instance's mount list via `colima ssh-config` / `colima list`.
+
+**If NOT shared → hard stop with an actionable error:**
+
+```
+ERROR: /Users/bob/secret-project is not in Docker Desktop's shared paths.
+
+Add it: Docker Desktop → Settings → Resources → File Sharing → add:
+  /Users/bob/secret-project
+  (or a parent like /Users/bob/projects)
+
+Then re-run.
+```
+
+**Why not auto-fix?** Programmatically editing Docker Desktop's `settings.json` is fragile (schema varies across versions, Docker needs restart, races with the GUI). A clear error + one re-run is faster and safer.
+
+**Why not just mount and see?** Silent empty mounts are the worst debugging experience — the agent "helpfully" tries to recreate files it expects to find. Pre-flight validation prevents this entirely.
+
+```yaml
+docker:
+  macos:
+    shared_paths_check: true    # default: true; set false to skip (advanced users)
+```
 
 ---
 
@@ -408,6 +483,7 @@ profiles:
     build:
       dockerfile: ./Dockerfile
       context: .
+      opencode_version: auto     # "auto" (match host), "latest", or pinned e.g. "0.21.0"
 
     run:
       env:
@@ -465,11 +541,26 @@ When no config file is found, the built-in default profile applies:
 
 A fresh sandbox has **no internet until you allow it**.
 
+### opencode version pinning
+
+The agent image needs the `opencode` binary. Version selection uses **build-arg with host detection**:
+
+| Value | Behavior |
+|---|---|
+| `auto` (default) | Wrapper runs `opencode version` on the host and pins the image to match. Host and sandbox always in sync. |
+| `latest` | Always installs the latest release. Simple but non-reproducible. |
+| `0.21.0` (explicit) | Pinned. Reproducible. Manual bump required. |
+
+- The Dockerfile declares `ARG OPENCODE_VERSION` and installs that version.
+- If host detection fails (opencode not installed, or version unreadable): falls back to `latest` with a warning log.
+- The resolved version is stamped into image labels: `opencode-sandbox.opencode-version=<version>`, `opencode-sandbox.build-date=<iso8601>`. `docker inspect` always shows what's inside.
+
+**Why auto-detection?** The sandbox is invisible infrastructure — you don't want to bump versions in two places. Auto keeps them in sync for free. Explicit pinning is there when reproducibility matters.
+
 ### Recipes (documented, not hard-coded flags)
 
-- **Git access:** mount `~/.gitconfig` RO + forward `SSH_AUTH_SOCK`.
 - **Package registries:** add the registry domain to `firewall.network.dns.allow`.
-- **Private registries/subnets:** add CIDRs to `firewall.network.allow_cidr`.
+- **Private registries/subnets:** add CIDRs to `firewall.network.cidr.allow`.
 
 ---
 
@@ -537,9 +628,9 @@ firewall:
 
 ## 14. Open Questions
 
-1. **SSH / git-credentials forwarding** — offer documented recipes vs. special-cased flags. Leaning toward recipes (mount `SSH_AUTH_SOCK`, `.gitconfig`).
-2. **opencode version pinning in the agent image** — how the image selects/pins the opencode binary (build arg? latest? pinned in Dockerfile?). Needs a recommendation.
-3. **macOS bind-mount path sharing** — Docker Desktop / Colima require the host path to be in the shared-paths list. The existing `docker.macos` validation flag should be retained/extended.
+1. **~~SSH / git-credentials forwarding~~** ✅ **Resolved (§7):** No special flags or code — uses the existing `run.mounts` + `run.env` mechanism. SSH agent: mount socket + set `SSH_AUTH_SOCK`. Git config: RO mount `.gitconfig`. HTTPS: forward token via `run.env` + `gh auth setup-git` recipe. Platform-specific socket paths are just the `source` value the user sets; wrapper stays agnostic.
+2. **~~opencode version pinning in the agent image~~** ✅ **Resolved (§11):** Build-arg with host detection. Default `auto` (matches host version via `opencode version`), overridable to `latest` or explicit pin. Falls back to `latest` + warning if host detection fails. Resolved version stamped in image labels for traceability.
+3. **~~macOS bind-mount path sharing~~** ✅ **Resolved (§7):** Pre-flight validation reads Docker Desktop's `settings.json` / Colima mount list, checks if `<cwd>` is covered. Hard stop with actionable error if not (no silent empty mounts). Config: `docker.macos.shared_paths_check` (default true, no-op on Linux). No auto-fix (fragile, version-dependent).
 
 ---
 
