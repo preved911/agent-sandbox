@@ -28,6 +28,7 @@ The existing tool already builds and runs a Docker container exposing an opencod
 7. **Each sandbox is three resources:** one Docker **volume** with opencode sessions (durable, survives container recreation, cleanup via a dedicated subcommand), one Docker **container with the agents** (opencode CLI or alternatives), and one Docker **container with the firewall** (all network communication flows through it, per the network rules).
 8. **opencode config and auth are taken from the host** and merged with overrides (the `permission` block at minimum). The same applies to skills and other user-side settings.
 9. **A `run` command creates (if absent) and attaches** to the sandbox. The attach step runs the equivalent of `opencode attach http://127.0.0.1:<port>` by default.
+10. **Reverse forwarding from host to container.** The config may declare port-to-port and socket-to-port maps that make host-side services (a local dev server, the Docker API, a database) reachable from inside the container network. The firewall container bridges these connections from the isolated network to the host.
 
 ---
 
@@ -296,7 +297,9 @@ Beyond permissions, sandbox-specific overrides are injected via `OPENCODE_CONFIG
 
 ---
 
-## 9. Port Forwarding
+## 9. Port Forwarding & Host Service Forwarding
+
+### 9.1 Outbound: container → host (publishing the agent port)
 
 opencode runs as a `serve` process inside the agent container, listening on `0.0.0.0:4096` (configurable).
 
@@ -307,6 +310,49 @@ opencode runs as a `serve` process inside the agent container, listening on `0.0
 - The wrapper records the allocated host port in container labels and uses it to print/run the attach command.
 
 **Remote Docker host support is removed** — there is no `docker.host` config and no `--docker-host` flag. The wrapper talks to the local daemon only.
+
+### 9.2 Reverse forwarding: host → container (making host services reachable inside)
+
+The agent inside the container often needs to reach services running on the host — a local dev server, a database, the Docker API, or any host-bound process. Because the agent container is on an **isolated network with no direct host access**, these services are made reachable through the **firewall container**, which is the sole bridge between the isolated network and the outside.
+
+**Config schema:**
+
+```yaml
+run:
+  reverse_forward:
+    ports:
+      - host: 3000            # TCP port on the host
+        container: 3000       # reachable at <firewall-ip>:3000 from the agent
+      - host: 5432
+        container: 15432      # can map to a different container-side port
+    sockets:
+      - socket: /var/run/docker.sock   # host Unix socket
+        container: 2375                # reachable at <firewall-ip>:2375 (TCP)
+```
+
+**Port-to-port mechanism:**
+
+The firewall container runs a forwarder process (e.g. `socat`) for each entry:
+
+- Listens on `<firewall-isolated-ip>:<container_port>` (the isolated-network interface only)
+- Connects to `host.docker.internal:<host_port>` (Docker Desktop) or `<host-gateway-ip>:<host_port>` (Linux)
+- The agent reaches the host service by connecting to `<firewall-ip>:<container_port>`
+
+The firewall's isolated-network IP is deterministic (it's the gateway of the isolated bridge). The wrapper injects it into the agent container's `/etc/hosts` or environment so the agent can reference it by a stable name.
+
+**Socket-to-port mechanism (platform-dependent):**
+
+| Host OS | Approach |
+|---|---|
+| **Linux** | Bind-mount the host Unix socket into the firewall container. Run `socat TCP-LISTEN:<container_port>,bind=<isolated-ip> UNIX-CONNECT:<socket_path>` inside the firewall container. |
+| **macOS — Docker socket** (`/var/run/docker.sock`) | Docker Desktop auto-proxies this socket across the VM boundary. Bind-mount + socat works identically to Linux. |
+| **macOS — other host Unix sockets** | The socket lives on the Mac host, **outside** the Linux VM — it cannot be bind-mounted directly. The wrapper starts a **host-side** forwarder (e.g. `socat UNIX-CONNECT:<socket> TCP-LISTEN:<port>`) on the Mac, bridging the socket to a TCP port on `localhost`. The firewall container then forwards from the isolated network to `host.docker.internal:<that_port>`. The wrapper manages the host-side process lifecycle (start on `create`, stop on `rm`). |
+
+**Implicit firewall rules:** When reverse_forward entries are configured, the wrapper **automatically generates nftables OUTPUT rules** in the firewall container allowing outbound connections to the host gateway (`host.docker.internal` on Docker Desktop, `host-gateway` IP on Linux) **on exactly the specified host ports** — no manual CIDR/DNS config needed. Each `host: <port>` entry produces one rule: `allow output to <host-gateway-ip>:<port>`. Socket entries that require a host-side bridge (macOS non-Docker sockets) similarly auto-allow the bridge port. The user should never have to also add `host.docker.internal` to a firewall allow list — declaring a reverse forward is sufficient.
+
+**Security note:** Reverse-forwarded ports **bypass the agent-facing CIDR/DNS firewall rules** (§5) by design — the user explicitly configured these tunnels. Traffic to forwarded ports is destined to the firewall container itself (local INPUT chain), not forwarded through nftables (FORWARD chain). The auto-allowed OUTPUT rules are scoped to the **exact host ports** in the config — the rest of the host remains unreachable. The general internet filtering still applies to all other traffic from the agent container.
+
+**Lifecycle:** reverse-forward processes start when the firewall container starts and stop when it stops. The host-side helper (macOS socket case only) is managed by the wrapper and tied to the sandbox lifecycle.
 
 ---
 
@@ -373,6 +419,15 @@ profiles:
       workdir: <cwd>            # set automatically to the host cwd
       port:
         bind: 127.0.0.1         # default; use 0.0.0.0 for LAN access
+      reverse_forward:
+        ports:
+          - host: 3000          # local dev server on host
+            container: 3000
+          - host: 5432          # local postgres
+            container: 15432
+        sockets:
+          - socket: /var/run/docker.sock  # Docker API
+            container: 2375
 
     firewall:
       network:
