@@ -108,21 +108,69 @@ Each sandbox is a **stack of three Docker resources** managed as a unit:
 
 ---
 
-## 5. CIDR + DNS Enforcement Model
+## 5. Network Enforcement Model — Allow + Deny, Deny Wins
 
-The two rule types are **complementary**, not redundant:
+### Two rule types, both with allow AND deny lists
 
-- **DNS allowlist (domain names):** controls *what can be resolved*. A domain not on the list never gets an IP — the connection fails at the DNS step.
-- **CIDR allowlist (IP ranges):** controls *what can be reached*. Even a known/hardcoded IP is blocked by nftables unless its range is allowed.
+Both CIDR and DNS rules support **independent allow and deny lists**. This models real-world intent:
 
-For a domain to be fully reachable, **both** its name must be DNS-allowed **and** its resolved IP must fall within an allowed CIDR. To keep this ergonomic, an **`auto_pin_resolved`** mode (default on) has the resolver dynamically write time-limited nftables allow rules for the IPs of allowlisted domains — so adding a domain to the DNS list "just works" without also whitelisting its CIDR range. CIDR rules remain the escape hatch for static/known ranges (private subnets, package registries, etc.).
+- **Allow-only mode** (secure default): start empty, allow specific destinations.
+- **Deny-only mode** (permissive): start with broad allow, deny specific destinations.
+- **Mixed mode** (common): allow a broad range, deny a subset.
+
+**Deny always wins.** If a destination matches both an allow and a deny rule, the deny rule takes precedence — regardless of specificity or order. This is enforced by rule evaluation ordering (deny rules checked first).
+
+### CIDR enforcement (nftables, IP layer)
+
+```
+nftables FORWARD chain (deny-first ordering):
+
+  1. established/related  → accept     (return traffic for allowed connections)
+  2. DENY CIDR rules      → drop       (checked BEFORE allow — deny wins)
+  3. ALLOW CIDR rules     → accept
+  4. auto_pin IPs         → accept     (resolved IPs of allowlisted domains)
+  5. default policy       → drop/accept (per config: default deny or allow)
+```
+
+A packet hitting a deny CIDR is dropped at step 2, before any allow rule at step 3 can match. This gives unconditional deny-wins semantics.
+
+### DNS enforcement (CoreDNS, resolution layer)
+
+```
+CoreDNS query resolution:
+
+  1. DENY domains    → immediate NXDOMAIN     (deny wins)
+  2. ALLOW domains   → forward to upstream resolvers
+  3. default policy  → NXDOMAIN (deny mode) or pass-through (allow mode)
+```
+
+Same deny-first logic. A domain on the deny list never resolves, even if it also matches an allow wildcard (e.g., `*.anthropic.com` allowed, `evil.anthropic.com` denied → evil gets NXDOMAIN).
+
+### Conflict detection
+
+At **config load time**, the wrapper validates rules and logs warnings:
+
+| Scenario | Action |
+|---|---|
+| Same CIDR in both allow and deny | **Warning:** `"Conflict: <cidr> appears in both allow and deny — deny takes precedence"` |
+| Overlapping CIDRs (allow ⊃ deny) | **Warning:** `"Conflict: deny <deny-cidr> is a subset of allow <allow-cidr> — deny wins for the overlap"` |
+| Same domain in both allow and deny | **Warning:** `"Conflict: <domain> in both allow and deny — deny takes precedence"` |
+| Allow wildcard + specific deny (e.g. `*.anthropic.com` allowed, `evil.anthropic.com` denied) | **Info** (not a conflict — intentional narrowing) |
+
+### auto_pin_resolved
+
+When `auto_pin_resolved: true` (default on), DNS-allowed domains have their resolved IPs automatically allowed in nftables — so adding a domain to the DNS allow list "just works" without also whitelisting its CIDR range. Resolved IPs are checked against the deny CIDR list first; if they fall in a deny range, the connection is blocked and a warning is logged.
+
+For a domain to be fully reachable: its name must be DNS-allowed (or default=allow) **AND** its resolved IP must not be in any deny CIDR **AND** (its IP is in an allow CIDR, OR auto_pin is on, OR default=allow).
 
 | Threat | Caught by |
 |---|---|
-| Agent calls a non-allowlisted domain | DNS → NXDOMAIN |
-| Agent calls an allowlisted domain | DNS resolves → nftables allows (CIDR or auto-pinned IP) |
-| Agent calls a hardcoded/raw IP not in a CIDR | nftables blocks |
-| Agent exfils over raw TCP to a blocked host | nftables blocks (no proxy-env bypass possible) |
+| Agent calls a denied domain | DNS → NXDOMAIN |
+| Agent calls a domain not in allow list (default=deny) | DNS → NXDOMAIN |
+| Agent calls an allowed domain | DNS resolves → nftables allows (CIDR/auto-pin/default) |
+| Agent calls a denied IP | nftables drops (deny rule checked first) |
+| Agent calls a hardcoded IP not in any allow CIDR (default=deny) | nftables drops |
+| Agent exfils over raw TCP to a blocked host | nftables drops (no proxy-env bypass possible) |
 
 ---
 
@@ -132,21 +180,30 @@ A sandbox is **bound to a directory**. The same absolute directory always maps t
 
 ### Path → name algorithm
 
-```
-input:  host absolute cwd, e.g. /Users/bob/projects/myapp
-output: opencode-sandbox-<slug>
+Docker enforces a **63-character limit** on container and volume names (DNS label spec). The prefix `opencode-sandbox-` alone consumes 18 characters, leaving only 45 for the path-derived part. Long filesystem paths (common on macOS: `/Users/bob/Documents/Developer/...`) would blow this budget immediately if converted naively.
 
-slug:   lowercase, replace '/' with '-', strip leading '-'
-        /Users/bob/projects/myapp  →  users-bob-projects-myapp
-        →  opencode-sandbox-users-bob-projects-myapp
+The naming scheme uses **basename + short hash** — readable, collision-safe, and guaranteed within limits:
+
+```
+input:   host absolute cwd, e.g. /Users/bob/projects/myapp
+
+step 1:  basename = last path component → "myapp"
+         (fallback: "root" if cwd is "/")
+step 2:  hash      = SHA-256(abspath)[:8] → "a1b2c3d4"
+step 3:  name      = "opencode-sandbox-" + basename + "-" + hash
+
+output:  opencode-sandbox-myapp-a1b2c3d4   (36 chars — well within 63)
 ```
 
-- **Collision safety:** if the slug exceeds Docker's 63-char name limit, truncate the middle and append a 12-char SHA-256 suffix of the full path.
-- **Labels (not just names):** every resource carries:
+**Budget enforcement:** `18 (prefix) + len(basename) + 1 (dash) + 8 (hash) = 27 + len(basename)`. If `basename` exceeds 36 chars, truncate from the left to fit (preserving the hash for uniqueness). Worst case: `opencode-sandbox-<36chars>-<8hash>` = exactly 63 chars.
+
+**Why basename, not full path?** The last directory component is what the user recognizes in `ps` output ("myapp", "client-portal-v2"). The full absolute path is stored in **labels** for lookup and display — the name is just a human handle. Two different paths with the same basename are differentiated by the hash.
+
+- **Labels (the real identity):** every resource carries:
   - `opencode-sandbox=true` (existing invariant)
-  - `opencode-sandbox-path=<absolute-host-cwd>`
+  - `opencode-sandbox-path=<absolute-host-cwd>` (full path for `ps` display + discovery)
   - `opencode-sandbox-role=agent|firewall`
-- This is how `ps`/`rm`/`logs` discover the stack.
+- `ps`/`rm`/`logs` discover resources by these labels, not by parsing names.
 
 ### Create-or-attach (`run`) logic
 
@@ -173,10 +230,10 @@ The **cwd is mounted at its own absolute path** inside the container — not at 
 
 ### opencode sessions (durable volume)
 
-opencode stores sessions under its data directory. To keep sessions durable but **scoped per-sandbox-path** (different projects don't share sessions), the data dir is a **named volume** rather than a bind mount:
+opencode stores sessions under its default data directory. To keep sessions durable but **scoped per-sandbox-path** (different projects don't share sessions), the data dir is a **named volume** rather than a bind mount:
 
-- Volume name: `opencode-sandbox-<slug>-sessions`
-- Mounted at the opencode data path inside the container
+- Volume name: `opencode-sandbox-<name>-sessions`
+- Mounted at **opencode's default data path** inside the container — not configurable. The wrapper uses whatever path opencode uses by default (currently `/root/.local/share/opencode` for root in the container). Less configuration burden, no surprises.
 - Survives `rm`; cleaned only via `clean-sessions`
 
 ### Configurable mounts (from profile)
@@ -185,9 +242,9 @@ User-defined mounts in the profile's `run.mounts` are applied on top, with Docke
 
 ---
 
-## 8. Host Config Inheritance & Overrides
+## 8. Host Config Inheritance & Permission Override
 
-The sandboxed opencode should behave like the host opencode, minus whatever the sandbox restricts.
+The sandboxed opencode should behave like the host opencode, with the container providing isolation instead of permission dialogs.
 
 ### Inheritance (read-only from host)
 
@@ -199,12 +256,41 @@ The sandboxed opencode should behave like the host opencode, minus whatever the 
 
 All mounted **read-only** so the sandbox cannot mutate host settings.
 
-### Overrides (injected, not mounted)
+### Permission override — the key design decision
 
-Sandbox-specific overrides are injected via opencode's `OPENCODE_CONFIG_CONTENT` environment variable — opencode deep-merges this inline JSON as the **final local-scope layer**. Typical overrides:
+**The entire point of the sandbox is to eliminate approve dialogs.** Inside the container, the user wants frictionless operation — `"*": "allow"` for all tools — because the container itself is the security boundary. The host's carefully-tuned permission rules (which exist to protect the *host*) are irrelevant inside the sandbox and should not produce dialogs.
 
-- `permission`: deny rules that tighten the host policy inside the sandbox (required minimum per the spec)
+**Problem:** opencode's `OPENCODE_CONFIG_CONTENT` uses **deep-merge**. If the host has `permission: {"bash": {"git *": "allow", "rm *": "deny", "*": "ask"}}` and the sandbox injects `permission: {"bash": {"*": "allow"}}`, the merge combines them — the host's `"rm *": "deny"` survives and could still trigger behavior the user doesn't want inside the sandbox.
+
+**Solution:** When the merge type changes (object → string), opencode replaces the value entirely. Injecting `{"permission": "allow"}` (a string) replaces the host's permission **object** with the string shorthand `"allow"` — which is opencode's built-in "allow everything" sentinel. The host's detailed rules disappear completely inside the sandbox.
+
+The sandbox profile controls this behavior:
+
+```yaml
+permissions:
+  mode: override              # default — REPLACES host permission block entirely
+  rules:
+    default: allow            # base: allow everything (no dialogs inside sandbox)
+    overrides:
+      bash:
+        "rm -rf /": deny      # optional: add specific denials even inside sandbox
+```
+
+**Two modes:**
+
+| Mode | Behavior | Use case |
+|---|---|---|
+| `override` (default) | Sandbox generates a **complete** permission block from the profile. Host's permission rules are invisible inside the container. | Normal use — container is the boundary, allow everything, no dialogs |
+| `merge` | Host's permission rules survive; sandbox adds/restricts on top via deep-merge | You want host restrictions (e.g., `edit: deny`) to also apply inside the sandbox |
+
+**Default profile behavior:** `mode: override`, `rules.default: allow` → injects `{"permission": "allow"}` → zero dialogs inside the sandbox.
+
+### Other overrides (injected, not mounted)
+
+Beyond permissions, sandbox-specific overrides are injected via `OPENCODE_CONFIG_CONTENT`:
+
 - `experimental`: sandbox-specific experiments
+- Model/provider overrides if the sandbox should use a different model than the host
 
 **Merge order:** host global → host project → `OPENCODE_CONFIG_CONTENT` (sandbox overrides win). No files are generated or mutated on the host.
 
@@ -290,16 +376,23 @@ profiles:
 
     firewall:
       network:
-        allow_cidr:
-          - 10.0.0.0/8
-          - 151.101.0.0/16      # fastly CDN
+        default: deny            # default policy: deny (secure) or allow (permissive)
+        cidr:
+          allow:
+            - 10.0.0.0/8
+            - 151.101.0.0/16      # fastly CDN
+          deny:
+            - 10.0.0.0/24         # a sensitive subnet inside the allowed /8
         auto_pin_resolved: true
         dns:
+          default: deny           # default DNS policy: deny (NXDOMAIN) or allow (pass-through)
           allow:
             - anthropic.com
             - "*.anthropic.com"
             - github.com
             - proxy.golang.org
+          deny:
+            - evil.anthropic.com  # narrow exception under the wildcard allow
           upstream:
             - 1.1.1.1
             - 8.8.8.8
@@ -330,31 +423,46 @@ A fresh sandbox has **no internet until you allow it**.
 ```yaml
 firewall:
   network:
-    # CIDR egress allowlist. Default DENY; only these ranges are reachable.
-    allow_cidr:
-      - 10.0.0.0/8
-    # When true, DNS-allowed domains have their resolved IPs auto-allowed in
-    # nftables (ergonomic). When false, BOTH DNS name + CIDR must match.
-    auto_pin_resolved: true
+    # Default IP-layer policy when no allow/deny rule matches.
+    #   deny  (default, secure) — drop everything not explicitly allowed
+    #   allow (permissive)      — allow everything not explicitly denied
+    default: deny
+    cidr:
+      allow:                  # CIDRs reachable at the IP layer
+        - 10.0.0.0/8
+        - 151.101.0.0/16      # fastly CDN
+      deny:                   # always drops, wins over allow regardless of specificity
+        - 10.0.0.0/24         # sensitive subnet inside the allowed /8
+    auto_pin_resolved: true   # DNS-allowed domain → auto-allow its resolved IPs in nftables
     dns:
-      # Domains allowed to resolve. Everything else → NXDOMAIN.
-      allow:
+      # Default DNS policy when no allow/deny rule matches.
+      #   deny  (default) — NXDOMAIN for everything not explicitly allowed
+      #   allow           — pass-through to upstream for everything not explicitly denied
+      default: deny
+      allow:                  # domains that resolve (forwarded to upstream)
         - anthropic.com
         - "*.anthropic.com"
-      upstream:        # resolvers the firewall forwards allowlisted queries to
+      deny:                   # always NXDOMAIN, wins over allow (even wildcard matches)
+        - evil.anthropic.com
+      upstream:               # resolvers the firewall forwards allowlisted queries to
         - 1.1.1.1
         - 8.8.8.8
 ```
 
 **Enforcement layers (inside the firewall container):**
 
-1. **CoreDNS** with a generated zone config: allowlisted domains → forward to `upstream`; all else → `NXDOMAIN`.
-2. **nftables** with a default-deny FORWARD policy:
-   - allow established/related (return traffic)
-   - allow DNS (UDP/53) to the upstream resolvers
-   - allow egress to each `allow_cidr` entry
-   - if `auto_pin_resolved`: time-limited allow rules for IPs resolved for allowlisted domains
-3. **Agent container** `/etc/resolv.conf` = firewall IP; default route = firewall IP.
+1. **CoreDNS** with a generated zone config:
+   - deny domains → immediate `NXDOMAIN` (**checked first — deny wins**)
+   - allow domains → forward to `upstream`
+   - default policy: `NXDOMAIN` (deny mode) or pass-through to `upstream` (allow mode)
+2. **nftables** with deny-first FORWARD chain ordering (see §5):
+   - allow established/related (return traffic for permitted connections)
+   - **deny CIDR rules → drop** (checked **before** allow — deny wins)
+   - allow CIDR rules → accept
+   - auto_pin resolved IPs → accept (checked against deny list first; overlap → drop + warn)
+   - default policy → drop (deny mode) or accept (allow mode)
+   - DNS (UDP/53) to upstream resolvers always allowed so allowlisted domains can resolve
+3. **Agent container** `/etc/resolv.conf` = firewall IP; default route = firewall IP. The agent has no direct path to the host bridge or internet.
 
 ---
 
@@ -374,11 +482,9 @@ firewall:
 
 ## 14. Open Questions
 
-1. **opencode data path inside the container** — confirm the exact path opencode uses for its SQLite/session store on the chosen base image, so the sessions volume mounts correctly. (Current code uses `/root/.local/share/opencode`; verify against current opencode.)
-2. **`auto_pin_resolved` implementation** — concrete mechanism for the DNS resolver to inject time-limited nftables rules (CoreDNS plugin vs. a sidecar watching resolver logs). Deferred to implementation planning.
-3. **SSH / git-credentials forwarding** — offer documented recipes vs. special-cased flags. Leaning toward recipes (mount `SSH_AUTH_SOCK`, `.gitconfig`).
-4. **opencode version pinning in the agent image** — how the image selects/pins the opencode binary (build arg? latest? pinned in Dockerfile?). Needs a recommendation.
-5. **macOS bind-mount path sharing** — Docker Desktop / Colima require the host path to be in the shared-paths list. The existing `docker.macos` validation flag should be retained/extended.
+1. **SSH / git-credentials forwarding** — offer documented recipes vs. special-cased flags. Leaning toward recipes (mount `SSH_AUTH_SOCK`, `.gitconfig`).
+2. **opencode version pinning in the agent image** — how the image selects/pins the opencode binary (build arg? latest? pinned in Dockerfile?). Needs a recommendation.
+3. **macOS bind-mount path sharing** — Docker Desktop / Colima require the host path to be in the shared-paths list. The existing `docker.macos` validation flag should be retained/extended.
 
 ---
 
