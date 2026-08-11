@@ -17,7 +17,9 @@ profiles:
     build:
       dockerfile: ./Dockerfile
       context: .
-      opencode_version: auto   # pin to host opencode version (default)
+      # Pass version info via build args (env vars expanded from host shell):
+      # args:
+      #   OPENCODE_VERSION: "${OPENCODE_VERSION}"
 
     run:
       env:
@@ -62,8 +64,3 @@ profiles:
           upstream:
             - 1.1.1.1
             - 8.8.8.8
-
-    permissions:
-      mode: override   # override replaces host permissions (sandbox IS the boundary)
-      rules:
-        default: allow

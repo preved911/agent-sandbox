@@ -9,8 +9,8 @@ import (
 	"github.com/preved911/opencode-sandbox/internal/build"
 	"github.com/preved911/opencode-sandbox/internal/config"
 	"github.com/preved911/opencode-sandbox/internal/docker"
-	"github.com/preved911/opencode-sandbox/internal/run"
 	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/opencode-sandbox/internal/stack"
 )
 
 func newCreateCmd(rf *rootFlags) *cobra.Command {
@@ -20,7 +20,7 @@ func newCreateCmd(rf *rootFlags) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a sandbox (volume + container) without attaching",
+		Short: "Create sandbox resources without starting or attaching",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(rf.configPath, rf.profile)
@@ -35,29 +35,31 @@ func newCreateCmd(rf *rootFlags) *cobra.Command {
 				return fmt.Errorf("get working directory: %w", err)
 			}
 			hash := sandbox.HashPath(cwd)
-			name := sandbox.ResourceName(hash, sandbox.SuffixAgent)
 
-			// Check if sandbox already exists.
 			cli, err := docker.NewClient("")
 			if err != nil {
 				return fmt.Errorf("docker client: %w", err)
 			}
 			defer cli.Close()
 
-			existing, err := findSandboxByName(ctx, cli, name)
+			s := stack.New(cli, hash, cfg)
+
+			// Check if sandbox already exists.
+			exists, err := s.Exists(ctx)
 			if err != nil {
-				return err
+				return fmt.Errorf("check sandbox: %w", err)
 			}
-			if existing != nil {
+			if exists {
 				out := cmd.OutOrStdout()
-				status := "unknown"
-				if existing.State != nil {
-					status = existing.State.Status
+				status, err := s.Status(ctx)
+				if err != nil {
+					return fmt.Errorf("sandbox status: %w", err)
 				}
-				fmt.Fprintf(out, "sandbox already exists: %s (status: %s)\n", name, status)
+				fmt.Fprintf(out, "sandbox already exists: %s (status: %s)\n", sandbox.ResourceName(hash, sandbox.SuffixAgent), status.Agent)
 				return nil
 			}
 
+			// Build image.
 			var image string
 			switch {
 			case cfg.Build.Image != "":
@@ -71,17 +73,15 @@ func newCreateCmd(rf *rootFlags) *cobra.Command {
 				}
 			}
 
-			res, err := run.Start(ctx, cli, cfg, image, name)
-			if err != nil {
-				return err
+			// Create stack (does not start).
+			if err := s.Create(ctx, image); err != nil {
+				return fmt.Errorf("create sandbox: %w", err)
 			}
 
 			out := cmd.OutOrStdout()
-			for _, b := range res.Binds {
-				fmt.Fprintf(out, "mount: %s\n", b)
-			}
-			fmt.Fprintf(out, "volume: %s\n", res.Volume)
-			fmt.Fprintf(out, "container: %s\n", res.Name)
+			fmt.Fprintf(out, "container: %s\n", sandbox.ResourceName(hash, sandbox.SuffixAgent))
+			fmt.Fprintf(out, "firewall: %s\n", sandbox.ResourceName(hash, sandbox.SuffixFirewall))
+			fmt.Fprintf(out, "volume:   %s\n", sandbox.ResourceName(hash, sandbox.SuffixSessions))
 			return nil
 		},
 	}

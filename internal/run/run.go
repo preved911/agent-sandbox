@@ -45,16 +45,9 @@ type Result struct {
 // Create creates a container named name running image without starting it.
 // The container is created on the specified network (if any) and can be started later.
 func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, hash string) error {
-	envSlice := make([]string, 0, len(cfg.Run.Env)+1)
+	envSlice := make([]string, 0, len(cfg.Run.Env))
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
-	}
-
-	// Inject OPENCODE_CONFIG_CONTENT for permission override/merge.
-	if content, err := config.GenerateOpenCodeConfigContent(cfg.Permissions); err != nil {
-		return fmt.Errorf("generate OPENCODE_CONFIG_CONTENT: %w", err)
-	} else if content != "" {
-		envSlice = append(envSlice, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 
 	binds, otherMounts, err := buildMounts(cfg)
@@ -122,16 +115,9 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 
 // Start creates and starts a container named name running image.
 func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, name string) (*Result, error) {
-	envSlice := make([]string, 0, len(cfg.Run.Env)+1)
+	envSlice := make([]string, 0, len(cfg.Run.Env))
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
-	}
-
-	// Inject OPENCODE_CONFIG_CONTENT for permission override/merge.
-	if content, err := config.GenerateOpenCodeConfigContent(cfg.Permissions); err != nil {
-		return nil, fmt.Errorf("generate OPENCODE_CONFIG_CONTENT: %w", err)
-	} else if content != "" {
-		envSlice = append(envSlice, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 
 	// Bind mounts use HostConfig.Binds (the "source:target[:ro]" string form

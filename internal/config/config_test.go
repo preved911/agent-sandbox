@@ -41,7 +41,6 @@ profiles:
     build:
       dockerfile: ./Dockerfile
       context: .
-      opencode_version: auto
     run:
       workdir: /workspace
       port:
@@ -72,13 +71,6 @@ profiles:
           upstream:
             - 1.1.1.1
             - 8.8.8.8
-    permissions:
-      mode: override
-      rules:
-        default: allow
-        overrides:
-          bash:
-            "rm -rf /": deny
 `
 	path := writeTempConfig(t, content)
 	cfg, err := Load(path, "")
@@ -103,25 +95,12 @@ profiles:
 		t.Errorf("Firewall.Network.DNS.Deny len = %d, want 1", len(cfg.Firewall.Network.DNS.Deny))
 	}
 
-	// Permissions
-	if cfg.Permissions.Mode != "override" {
-		t.Errorf("Permissions.Mode = %q, want %q", cfg.Permissions.Mode, "override")
-	}
-	if cfg.Permissions.Rules.Default != "allow" {
-		t.Errorf("Permissions.Rules.Default = %q, want %q", cfg.Permissions.Rules.Default, "allow")
-	}
-
 	// Reverse forward
 	if len(cfg.Run.ReverseForward.Ports) != 1 {
 		t.Errorf("Run.ReverseForward.Ports len = %d, want 1", len(cfg.Run.ReverseForward.Ports))
 	}
 	if len(cfg.Run.ReverseForward.Sockets) != 1 {
 		t.Errorf("Run.ReverseForward.Sockets len = %d, want 1", len(cfg.Run.ReverseForward.Sockets))
-	}
-
-	// Build
-	if cfg.Build.OpencodeVersion != "auto" {
-		t.Errorf("Build.OpencodeVersion = %q, want %q", cfg.Build.OpencodeVersion, "auto")
 	}
 
 	// Port
@@ -237,30 +216,6 @@ func TestValidatePortRange(t *testing.T) {
 						Ports: []PortForward{{Host: tt.port, Container: 3000}},
 					},
 				},
-			}
-			err := Validate(cfg)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidatePermissionsMode(t *testing.T) {
-	tests := []struct {
-		name    string
-		mode    string
-		wantErr bool
-	}{
-		{"empty (default)", "", false},
-		{"override", "override", false},
-		{"merge", "merge", false},
-		{"invalid", "ask", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				Permissions: PermissionsConfig{Mode: tt.mode},
 			}
 			err := Validate(cfg)
 			if (err != nil) != tt.wantErr {

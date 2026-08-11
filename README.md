@@ -29,10 +29,6 @@ profiles:
       workdir: /workspace
       port:
         bind: 127.0.0.1
-    permissions:
-      mode: override
-      rules:
-        default: allow
 ```
 
 Then run:
@@ -59,11 +55,10 @@ The agent container's DNS is pointed at the firewall, which enforces network rul
 
 | Command | Description |
 |---------|-------------|
-| `run` | Build (unless `--no-build`) and start a sandbox, print the attach URL |
-| `create` | Build + create sandbox without attaching |
+| `run` | Create (if needed), start, and attach to a sandbox |
+| `create` | Create sandbox resources without starting or attaching |
 | `start` | Start a stopped sandbox |
 | `stop` | Stop a running sandbox |
-| `attach` | Print the attach URL for a running sandbox |
 | `build` | Build the sandbox image without creating a container |
 | `ps` | List sandbox containers (`-a` to include stopped/failed) |
 | `rm` | Remove sandbox containers by name/ID, or `--all` |
@@ -108,7 +103,6 @@ profiles:
     build:
       dockerfile: ./Dockerfile
       context: .
-      opencode_version: auto   # pin to host opencode version
 
     run:
       env:
@@ -136,33 +130,15 @@ profiles:
           upstream: [1.1.1.1, 8.8.8.8]
         auto_pin_resolved: true
 
-    permissions:
-      mode: override   # override replaces host permissions
-      rules:
-        default: allow
-
     reverse_forward:
       ports:
         - host: 3000
           container: 3000
 ```
 
-### Permission modes
-
-- **`override`** (default): Replaces host opencode permissions entirely. Inside the sandbox, all tools are allowed — the container IS the security boundary.
-- **`merge`**: Host permission rules survive. Use when you want sandbox isolation plus fine-grained tool restrictions.
-
 ### Network rules
 
 Firewall rules use deny-wins semantics: if an address appears in both allow and deny lists, deny wins. Conflict detection logs warnings at config load.
-
-### opencode version pinning
-
-`build.opencode_version` controls which opencode version runs inside the sandbox:
-
-- **`auto`** (default): Detects host opencode version, pins image to match.
-- **`latest`**: Always latest release.
-- **Explicit** (e.g. `0.21.0`): Reproducible, manual bump.
 
 ### Reverse forwarding
 

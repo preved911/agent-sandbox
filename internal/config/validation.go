@@ -14,9 +14,6 @@ func Validate(c *Config) error {
 	if err := validateFirewall(&c.Firewall); err != nil {
 		return fmt.Errorf("firewall: %w", err)
 	}
-	if err := validatePermissions(&c.Permissions); err != nil {
-		return fmt.Errorf("permissions: %w", err)
-	}
 	if err := validateReverseForward(&c.Run.ReverseForward); err != nil {
 		return fmt.Errorf("reverse_forward: %w", err)
 	}
@@ -150,16 +147,4 @@ func validateReverseForward(r *ReverseForwardConfig) error {
 		}
 	}
 	return nil
-}
-
-func validatePermissions(p *PermissionsConfig) error {
-	if p.Mode == "" {
-		return nil // empty means use default ("override")
-	}
-	switch p.Mode {
-	case "override", "merge":
-		return nil
-	default:
-		return fmt.Errorf("mode: invalid value %q, must be \"override\" or \"merge\"", p.Mode)
-	}
 }

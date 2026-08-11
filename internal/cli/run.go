@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -24,10 +25,11 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 		envOverrides   []string
 		mountOverrides []string
 		bindOverride   string
+		attachCmd      string
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Build and start a sandbox, then print the opencode attach URL",
+		Short: "Create (if needed), start, and attach to a sandbox",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(rf.configPath, rf.profile)
@@ -55,58 +57,110 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				cfg.Run.Port.Bind = bindOverride
 			}
 
-		ctx := cmd.Context()
+			ctx := cmd.Context()
 
-		// Compute the sandbox hash from the current working directory.
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("get working directory: %w", err)
-		}
-		hash := sandbox.HashPath(cwd)
-
-		var image string
-		switch {
-		case cfg.Build.Image != "":
-			image = cfg.Build.Image
-		case noBuild:
-			image = "opencode-sandbox/" + cfg.Name + ":latest"
-		default:
-			image, err = build.ImageBuild(ctx, cfg, build.Options{Pull: pull})
+			// Compute the sandbox hash from the current working directory.
+			cwd, err := os.Getwd()
 			if err != nil {
+				return fmt.Errorf("get working directory: %w", err)
+			}
+			hash := sandbox.HashPath(cwd)
+
+			cli, err := docker.NewClient("")
+			if err != nil {
+				return fmt.Errorf("docker client: %w", err)
+			}
+			defer cli.Close()
+
+			// Pre-flight: verify cwd is in Docker's shared paths (macOS only).
+			if cfg.SharedPathsCheck {
+				if err := preflight.SharedPathsCheck(cwd); err != nil {
+					return err
+				}
+			}
+
+			s := stack.New(cli, hash, cfg)
+
+			// Check if stack already exists.
+			exists, err := s.Exists(ctx)
+			if err != nil {
+				return fmt.Errorf("check sandbox: %w", err)
+			}
+
+			if !exists {
+				// Sandbox doesn't exist — build, create, start.
+				var image string
+				switch {
+				case cfg.Build.Image != "":
+					image = cfg.Build.Image
+				case noBuild:
+					image = "opencode-sandbox/" + cfg.Name + ":latest"
+				default:
+					image, err = build.ImageBuild(ctx, cfg, build.Options{Pull: pull})
+					if err != nil {
+						return err
+					}
+				}
+
+				if err := s.Create(ctx, image); err != nil {
+					return fmt.Errorf("create sandbox: %w", err)
+				}
+				if err := s.Start(ctx); err != nil {
+					return fmt.Errorf("start sandbox: %w", err)
+				}
+			} else {
+				// Sandbox exists — start if stopped.
+				status, err := s.Status(ctx)
+				if err != nil {
+					return fmt.Errorf("sandbox status: %w", err)
+				}
+				if status.Agent != "running" {
+					if err := s.Start(ctx); err != nil {
+						return fmt.Errorf("start sandbox: %w", err)
+					}
+				}
+			}
+
+			// Get the published port.
+			port, err := s.GetPort(ctx)
+			if err != nil {
+				return fmt.Errorf("get port: %w", err)
+			}
+
+			// Determine the bind IP for the URL.
+			bindIP := cfg.Run.Port.Bind
+			if bindIP == "" || bindIP == "0.0.0.0" {
+				bindIP = "127.0.0.1"
+			}
+
+			url := fmt.Sprintf("http://%s:%s", bindIP, port)
+
+			// Execute attach command.
+			out := cmd.OutOrStdout()
+			if attachCmd != "" {
+				cmdStr := strings.ReplaceAll(attachCmd, "%s", url)
+				fmt.Fprintf(out, "$ %s\n", cmdStr)
+				c := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+				c.Stdout = out
+				c.Stderr = cmd.ErrOrStderr()
+				c.Stdin = os.Stdin
+				return c.Run()
+			}
+
+			// Default: run opencode attach.
+			fmt.Fprintf(out, "opencode attach %s\n", url)
+			c := exec.CommandContext(ctx, "opencode", "attach", url)
+			c.Stdout = out
+			c.Stderr = cmd.ErrOrStderr()
+			c.Stdin = os.Stdin
+			if err := c.Run(); err != nil {
+				if execErr, ok := err.(*exec.Error); ok && execErr.Err == exec.ErrNotFound {
+					fmt.Fprintf(out, "\nopencode not found in PATH. Connect manually:\n  opencode attach %s\n", url)
+					return nil
+				}
 				return err
 			}
-		}
-
-		cli, err := docker.NewClient("")
-		if err != nil {
-			return fmt.Errorf("docker client: %w", err)
-		}
-		defer cli.Close()
-
-		// Pre-flight: verify cwd is in Docker's shared paths (macOS only).
-		if cfg.SharedPathsCheck {
-			if err := preflight.SharedPathsCheck(cwd); err != nil {
-				return err
-			}
-		}
-
-		s := stack.New(cli, hash, cfg)
-
-		if err := s.Create(ctx, image); err != nil {
-			return err
-		}
-		if err := s.Start(ctx); err != nil {
-			return err
-		}
-
-		port, err := s.GetPort(ctx)
-		if err != nil {
-			return fmt.Errorf("get port: %w", err)
-		}
-
-		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "opencode attach http://127.0.0.1:%s\n", port)
-		return nil
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&nameOverride, "name", "", "container name (default: <hash>-agent)")
@@ -115,6 +169,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 	cmd.Flags().StringArrayVarP(&envOverrides, "env", "e", nil, "set or override an env var (KEY=VALUE); repeatable")
 	cmd.Flags().StringArrayVarP(&mountOverrides, "mount", "v", nil, "append a mount (source:target[:ro]); repeatable")
 	cmd.Flags().StringVar(&bindOverride, "bind", "", "override run.port.bind (e.g. 0.0.0.0)")
+	cmd.Flags().StringVar(&attachCmd, "cmd", "", "custom attach command (use %%s for URL placeholder)")
 	return cmd
 }
 

@@ -27,14 +27,12 @@ The tool creates isolated Docker sandboxes for opencode agents. Each sandbox has
 ### Package layout
 
 - `cmd/opencode-sandbox/main.go` — Entry point, signal handling
-- `internal/cli/` — Cobra commands: root, run, build, create, start, stop, attach, logs, ps, rm, sessions (ps/rm), config
-- `internal/config/` — Config loading, types, validation, merge logic
+- `internal/cli/` — Cobra commands: root, run, build, create, start, stop, logs, ps, rm, sessions (ps/rm), config
+- `internal/config/` — Config loading, types, validation
   - `config.go` — Profile-based config loader (explicit path → ./opencode-sandbox.yaml → $XDG_CONFIG_HOME)
   - `firewall.go` — NetworkConfig, CIDRRules, DNSRules types
-  - `permissions.go` — PermissionsConfig (override/merge modes)
   - `forward.go` — ReverseForwardConfig (ports + sockets)
   - `validation.go` — CIDR parsing, conflict detection, port validation
-  - `merge.go` — GenerateOpenCodeConfigContent for OPENCODE_CONFIG_CONTENT injection
 - `internal/sandbox/` — Naming (hash-based), labels, constants
   - `HashPath(absPath) → 8 hex chars` — deterministic sandbox identity
   - `ResourceName(hash, suffix) → opencode-sandbox-<hash>-<suffix>`
@@ -55,7 +53,6 @@ The tool creates isolated Docker sandboxes for opencode agents. Each sandbox has
 - **Naming:** hash-only (`opencode-sandbox-<hash>-<suffix>`), SHA-256[:8] of absolute cwd path
 - **3 resources per sandbox:** agent container + firewall container + sessions volume
 - **Network isolation:** agent DNS → firewall; nftables enforces CIDR/DNS rules; deny wins
-- **Permission override:** `OPENCODE_CONFIG_CONTENT` with `{"permission":"allow"}` string replaces host permission object
 - **Reverse forwarding:** socat in firewall, implicit nftables OUTPUT rules auto-generated
 - **Config loading:** profiles-based, deep-merge (project overrides global)
 
@@ -71,7 +68,7 @@ profiles:
     build:
       dockerfile: string
       context: string
-      opencode_version: "auto" | "latest" | "<version>"
+      args: {KEY: "${ENV_VAR}"}  # env vars expanded from host shell
     run:
       env: map[string]string
       mounts: [{source, target, readonly?}]
@@ -90,11 +87,6 @@ profiles:
           deny: [string]
           upstream: [string]
         auto_pin_resolved: bool
-    permissions:
-      mode: "override" | "merge"
-      rules:
-        default: "allow" | "deny" | "ask"
-        overrides: map[string]object
     reverse_forward:
       ports: [{host: int, container: int}]
       sockets: [{socket: string, container: int}]

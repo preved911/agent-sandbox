@@ -67,7 +67,9 @@ func ImageBuild(ctx context.Context, cfg *config.Config, opts Options) (string, 
 		args = append(args, "--pull")
 	}
 	for k, v := range cfg.Build.Args {
-		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", k, v))
+		// Expand environment variables in arg values (e.g., ${VAR} or $VAR).
+		expanded := os.ExpandEnv(v)
+		args = append(args, "--build-arg", fmt.Sprintf("%s=%s", k, expanded))
 	}
 	for _, s := range cfg.Build.Secrets {
 		spec, err := secretSpec(s, cfg.BaseDir())

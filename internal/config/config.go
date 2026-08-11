@@ -31,11 +31,10 @@ import (
 
 // Config is a single sandbox/profile configuration.
 type Config struct {
-	Name        string            `yaml:"name,omitempty"`
-	Build       BuildConfig       `yaml:"build,omitempty"`
-	Run         RunConfig         `yaml:"run,omitempty"`
-	Firewall    FirewallConfig    `yaml:"firewall,omitempty"`
-	Permissions PermissionsConfig `yaml:"permissions,omitempty"`
+	Name     string         `yaml:"name,omitempty"`
+	Build    BuildConfig    `yaml:"build,omitempty"`
+	Run      RunConfig      `yaml:"run,omitempty"`
+	Firewall FirewallConfig `yaml:"firewall,omitempty"`
 
 	// Computed fields (not user config, set by loader)
 	SharedPathsCheck bool // from docker.macos.shared_paths_check (macOS only)
@@ -44,14 +43,13 @@ type Config struct {
 }
 
 type BuildConfig struct {
-	Image           string            `yaml:"image,omitempty"`
-	Dockerfile      string            `yaml:"dockerfile,omitempty"`
-	Context         string            `yaml:"context,omitempty"`
-	Target          string            `yaml:"target,omitempty"`
-	Args            map[string]string `yaml:"args,omitempty"`
-	Secrets         []Secret          `yaml:"secrets,omitempty"`
-	Pull            bool              `yaml:"pull,omitempty"`
-	OpencodeVersion string            `yaml:"opencode_version,omitempty"` // "auto" (default) | "latest" | "0.21.0"
+	Image      string            `yaml:"image,omitempty"`
+	Dockerfile string            `yaml:"dockerfile,omitempty"`
+	Context    string            `yaml:"context,omitempty"`
+	Target     string            `yaml:"target,omitempty"`
+	Args       map[string]string `yaml:"args,omitempty"`
+	Secrets    []Secret          `yaml:"secrets,omitempty"`
+	Pull       bool              `yaml:"pull,omitempty"`
 }
 
 // Secret is a BuildKit-style build secret. Exactly one of Src or Env must be set.
