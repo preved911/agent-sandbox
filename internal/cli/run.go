@@ -1,9 +1,8 @@
 package cli
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,6 +12,7 @@ import (
 	"github.com/preved911/opencode-sandbox/internal/docker"
 	"github.com/preved911/opencode-sandbox/internal/paths"
 	"github.com/preved911/opencode-sandbox/internal/run"
+	"github.com/preved911/opencode-sandbox/internal/sandbox"
 )
 
 func newRunCmd(rf *rootFlags) *cobra.Command {
@@ -57,31 +57,38 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				cfg.Run.Port.Bind = bindOverride
 			}
 
-			ctx := cmd.Context()
+		ctx := cmd.Context()
 
-			var image string
-			switch {
-			case cfg.Build.Image != "":
-				image = cfg.Build.Image
-			case noBuild:
-				image = "opencode-sandbox/" + cfg.Name + ":latest"
-			default:
-				image, err = build.ImageBuild(ctx, cfg, build.Options{Pull: pull})
-				if err != nil {
-					return err
-				}
-			}
+		// Compute the sandbox hash from the current working directory.
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("get working directory: %w", err)
+		}
+		hash := sandbox.HashPath(cwd)
 
-			cli, err := docker.NewClient(cfg.DockerHost)
+		var image string
+		switch {
+		case cfg.Build.Image != "":
+			image = cfg.Build.Image
+		case noBuild:
+			image = "opencode-sandbox/" + cfg.Name + ":latest"
+		default:
+			image, err = build.ImageBuild(ctx, cfg, build.Options{Pull: pull})
 			if err != nil {
-				return fmt.Errorf("docker client: %w", err)
+				return err
 			}
-			defer cli.Close()
+		}
 
-			name := nameOverride
-			if name == "" {
-				name = generateName(cfg.Name)
-			}
+		cli, err := docker.NewClient(cfg.DockerHost)
+		if err != nil {
+			return fmt.Errorf("docker client: %w", err)
+		}
+		defer cli.Close()
+
+		name := nameOverride
+		if name == "" {
+			name = sandbox.ResourceName(hash, sandbox.SuffixAgent)
+		}
 
 			res, err := run.Start(ctx, cli, cfg, image, name)
 			if err != nil {
@@ -141,15 +148,4 @@ func parseMountFlag(s string) (config.Mount, error) {
 		m.ReadOnly = true
 	}
 	return m, nil
-}
-
-// generateName creates a deterministic-looking container name from a profile
-// name and a short random suffix, e.g. "go-dev-a3f7b2".
-func generateName(profile string) string {
-	b := make([]byte, 3)
-	if _, err := rand.Read(b); err != nil {
-		// Fall back to a static suffix if crypto/rand fails.
-		return profile + "-sandbox"
-	}
-	return profile + "-" + hex.EncodeToString(b)
 }
