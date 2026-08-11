@@ -11,11 +11,44 @@ import (
 // It returns an error if the config is invalid, and logs warnings for
 // non-fatal issues like conflicting CIDR rules.
 func Validate(c *Config) error {
+	if err := validateRun(&c.Run); err != nil {
+		return fmt.Errorf("run: %w", err)
+	}
 	if err := validateFirewall(&c.Firewall); err != nil {
 		return fmt.Errorf("firewall: %w", err)
 	}
 	if err := validateReverseForward(&c.Run.ReverseForward); err != nil {
 		return fmt.Errorf("reverse_forward: %w", err)
+	}
+	return nil
+}
+
+// NormalizePort normalizes a container port string.
+// "4096" → "4096/tcp", "4096/udp" → "4096/udp", "4096/tcp" → "4096/tcp".
+func NormalizePort(port string) string {
+	if port == "" {
+		return ""
+	}
+	if !strings.Contains(port, "/") {
+		return port + "/tcp"
+	}
+	return port
+}
+
+func validateRun(r *RunConfig) error {
+	if r.Port.Container == "" {
+		return fmt.Errorf("port.container: required (e.g. \"4096/tcp\")")
+	}
+	r.Port.Container = NormalizePort(r.Port.Container)
+	// Validate port number part is numeric
+	numStr := strings.SplitN(r.Port.Container, "/", 2)[0]
+	if numStr == "" {
+		return fmt.Errorf("port.container: port number required")
+	}
+	for _, ch := range numStr {
+		if ch < '0' || ch > '9' {
+			return fmt.Errorf("port.container: port number must be numeric, got %q", numStr)
+		}
 	}
 	return nil
 }

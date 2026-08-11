@@ -21,8 +21,8 @@ func newRootCmd() *cobra.Command {
 	rf := &rootFlags{}
 	cmd := &cobra.Command{
 		Use:           "opencode-sandbox",
-		Short:         "Manage isolated opencode containers",
-		Long:          "opencode-sandbox builds and runs containers that expose an opencode `serve` endpoint on a random host port, so you can attach a local opencode client to a sandboxed run.",
+		Short:         "Manage isolated agent containers",
+		Long:          "Builds and runs containers that expose an agent endpoint on a random host port, so you can attach a local client to a sandboxed run.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

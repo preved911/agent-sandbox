@@ -181,6 +181,9 @@ func TestValidateCIDR(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{
+				Run: RunConfig{
+					Port: PortConfig{Container: "4096/tcp"},
+				},
 				Firewall: FirewallConfig{
 					Network: NetworkConfig{
 						CIDR: CIDRRules{Allow: []string{tt.cidr}},
@@ -212,6 +215,7 @@ func TestValidatePortRange(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{
 				Run: RunConfig{
+					Port: PortConfig{Container: "4096/tcp"},
 					ReverseForward: ReverseForwardConfig{
 						Ports: []PortForward{{Host: tt.port, Container: 3000}},
 					},
@@ -227,6 +231,9 @@ func TestValidatePortRange(t *testing.T) {
 
 func TestValidateDNSUpstream(t *testing.T) {
 	cfg := &Config{
+		Run: RunConfig{
+			Port: PortConfig{Container: "4096/tcp"},
+		},
 		Firewall: FirewallConfig{
 			Network: NetworkConfig{
 				DNS: DNSRules{
@@ -255,6 +262,9 @@ func TestValidateNetworkDefault(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{
+				Run: RunConfig{
+					Port: PortConfig{Container: "4096/tcp"},
+				},
 				Firewall: FirewallConfig{
 					Network: NetworkConfig{Default: tt.def},
 				},

@@ -94,7 +94,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				case cfg.Build.Image != "":
 					image = cfg.Build.Image
 				case noBuild:
-					image = "opencode-sandbox/" + cfg.Name + ":latest"
+					image = cfg.Name + ":latest"
 				default:
 					image, err = build.ImageBuild(ctx, cfg, build.Options{Pull: pull})
 					if err != nil {
@@ -147,19 +147,22 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				return c.Run()
 			}
 
-			// Default: run opencode attach.
-			fmt.Fprintf(out, "opencode attach %s\n", url)
-			c := exec.CommandContext(ctx, "opencode", "attach", url)
-			c.Stdout = out
-			c.Stderr = cmd.ErrOrStderr()
-			c.Stdin = os.Stdin
-			if err := c.Run(); err != nil {
-				if execErr, ok := err.(*exec.Error); ok && execErr.Err == exec.ErrNotFound {
-					fmt.Fprintf(out, "\nopencode not found in PATH. Connect manually:\n  opencode attach %s\n", url)
-					return nil
+			// Use config-defined attach command if available.
+			if cfg.Run.AttachCmd != "" {
+				cmdStr := strings.ReplaceAll(cfg.Run.AttachCmd, "%s", url)
+				fmt.Fprintf(out, "$ %s\n", cmdStr)
+				c := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+				c.Stdout = out
+				c.Stderr = cmd.ErrOrStderr()
+				c.Stdin = os.Stdin
+				if err := c.Run(); err != nil {
+					return fmt.Errorf("attach command: %w", err)
 				}
-				return err
+				return nil
 			}
+
+			// No attach command configured — print URL for manual connection.
+			fmt.Fprintf(out, "\nSandbox ready. Connect manually:\n  %s\n", url)
 			return nil
 		},
 	}
