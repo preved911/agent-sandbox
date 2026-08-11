@@ -12,6 +12,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 
@@ -39,6 +40,84 @@ type Result struct {
 	HostPort    int
 	Binds       []string // resolved bind specs (source:target[:ro]) passed to the daemon
 	Volume      string   // named Docker volume used for session persistence
+}
+
+// Create creates a container named name running image without starting it.
+// The container is created on the specified network (if any) and can be started later.
+func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, hash string) error {
+	envSlice := make([]string, 0, len(cfg.Run.Env)+1)
+	for k, v := range cfg.Run.Env {
+		envSlice = append(envSlice, k+"="+v)
+	}
+
+	// Inject OPENCODE_CONFIG_CONTENT for permission override/merge.
+	if content, err := config.GenerateOpenCodeConfigContent(cfg.Permissions); err != nil {
+		return fmt.Errorf("generate OPENCODE_CONFIG_CONTENT: %w", err)
+	} else if content != "" {
+		envSlice = append(envSlice, "OPENCODE_CONFIG_CONTENT="+content)
+	}
+
+	binds, otherMounts, err := buildMounts(cfg)
+	if err != nil {
+		return err
+	}
+
+	volumeName := sandbox.ResourceName(hash, sandbox.SuffixSessions)
+	otherMounts = append(otherMounts, mount.Mount{
+		Type:   mount.TypeVolume,
+		Source: volumeName,
+		Target: opencodeContainerDataDir,
+	})
+
+	if home, err := os.UserHomeDir(); err == nil {
+		hostOpencodeConfig := home + "/.config/opencode"
+		if info, err := os.Stat(hostOpencodeConfig); err == nil && info.IsDir() {
+			binds = append(binds, hostOpencodeConfig+":/root/.config/opencode:ro")
+		}
+	}
+
+	bindIP := cfg.Run.Port.Bind
+	if bindIP == "" {
+		bindIP = "127.0.0.1"
+	}
+
+	name := sandbox.ResourceName(hash, sandbox.SuffixAgent)
+	labels := sandbox.DefaultLabels(hash, "", "")
+
+	cConf := &container.Config{
+		Image:      image,
+		Entrypoint: entrypoint,
+		Cmd:        cmd,
+		Env:        envSlice,
+		WorkingDir:   cfg.Run.Workdir,
+		User:         cfg.Run.User,
+		ExposedPorts: nat.PortSet{containerPort: struct{}{}},
+		Labels:       labels,
+	}
+	hConf := &container.HostConfig{
+		Binds:  binds,
+		Mounts: otherMounts,
+		PortBindings: nat.PortMap{
+			containerPort: []nat.PortBinding{{HostIP: bindIP, HostPort: "0"}},
+		},
+		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+		// DNS points to the firewall container so all DNS queries are filtered by CoreDNS.
+		DNS: []string{"172.20.0.1"},
+	}
+
+	// Network config — join isolated network if specified
+	nConf := &network.NetworkingConfig{}
+	networkName := sandbox.ResourceName(hash, sandbox.SuffixNet)
+	nConf.EndpointsConfig = map[string]*network.EndpointSettings{
+		networkName: {},
+	}
+
+	_, err = cli.ContainerCreate(ctx, cConf, hConf, nConf, nil, name)
+	if err != nil {
+		return fmt.Errorf("create container: %w", err)
+	}
+
+	return nil
 }
 
 // Start creates and starts a container named name running image.
@@ -114,6 +193,8 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 			containerPort: []nat.PortBinding{{HostIP: bindIP, HostPort: "0"}},
 		},
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+		// DNS points to the firewall container so all DNS queries are filtered by CoreDNS.
+		DNS: []string{"172.20.0.1"},
 	}
 
 	created, err := cli.ContainerCreate(ctx, cConf, hConf, nil, nil, name)

@@ -25,6 +25,9 @@ const LabelPath = "opencode-sandbox.path"
 // LabelProfile carries the config profile name for debugging.
 const LabelProfile = "opencode-sandbox.profile"
 
+// SandboxRole identifies the role of a sandbox container ("agent" or "firewall").
+const SandboxRole = "opencode-sandbox.role"
+
 // Resource suffixes. All sandbox resources share the same hash base plus a
 // type suffix:
 //

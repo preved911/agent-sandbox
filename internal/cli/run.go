@@ -11,8 +11,8 @@ import (
 	"github.com/preved911/opencode-sandbox/internal/config"
 	"github.com/preved911/opencode-sandbox/internal/docker"
 	"github.com/preved911/opencode-sandbox/internal/paths"
-	"github.com/preved911/opencode-sandbox/internal/run"
 	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/opencode-sandbox/internal/stack"
 )
 
 func newRunCmd(rf *rootFlags) *cobra.Command {
@@ -82,24 +82,23 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 		}
 		defer cli.Close()
 
-		name := nameOverride
-		if name == "" {
-			name = sandbox.ResourceName(hash, sandbox.SuffixAgent)
+		s := stack.New(cli, hash, cfg)
+
+		if err := s.Create(ctx, image); err != nil {
+			return err
+		}
+		if err := s.Start(ctx); err != nil {
+			return err
 		}
 
-			res, err := run.Start(ctx, cli, cfg, image, name)
-			if err != nil {
-				return err
-			}
+		port, err := s.GetPort(ctx)
+		if err != nil {
+			return fmt.Errorf("get port: %w", err)
+		}
 
-			out := cmd.OutOrStdout()
-			for _, b := range res.Binds {
-				fmt.Fprintf(out, "mount: %s\n", b)
-			}
-			fmt.Fprintf(out, "volume: %s\n", res.Volume)
-
-			fmt.Fprintf(out, "opencode attach http://127.0.0.1:%d\n", res.HostPort)
-			return nil
+		out := cmd.OutOrStdout()
+		fmt.Fprintf(out, "opencode attach http://127.0.0.1:%s\n", port)
+		return nil
 		},
 	}
 	cmd.Flags().StringVar(&nameOverride, "name", "", "container name (default: <hash>-agent)")
