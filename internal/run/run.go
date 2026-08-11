@@ -21,18 +21,6 @@ import (
 	"github.com/preved911/opencode-sandbox/internal/sandbox"
 )
 
-// containerPort is the port opencode serves on inside the container.
-const containerPort nat.Port = "4096/tcp"
-
-// opencodeContainerDataDir is the in-container path where opencode stores its
-// SQLite database and session data. The official opencode binary writes to
-// ~/.local/share/opencode/ regardless of the OPENCODE_DATA_DIRECTORY env var,
-// so we mount the Docker named volume directly at that path.
-const opencodeContainerDataDir = "/root/.local/share/opencode"
-
-var entrypoint = []string{"opencode"}
-var cmd = []string{"serve", "--hostname=0.0.0.0", "--port=4096"}
-
 // Result describes a successfully started sandbox.
 type Result struct {
 	ContainerID string
@@ -45,6 +33,8 @@ type Result struct {
 // Create creates a container named name running image without starting it.
 // The container is created on the specified network (if any) and can be started later.
 func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, hash string) error {
+	containerPort := nat.Port(cfg.Run.Port.Container)
+
 	envSlice := make([]string, 0, len(cfg.Run.Env))
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
@@ -55,18 +45,14 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 		return err
 	}
 
-	volumeName := sandbox.ResourceName(hash, sandbox.SuffixSessions)
-	otherMounts = append(otherMounts, mount.Mount{
-		Type:   mount.TypeVolume,
-		Source: volumeName,
-		Target: opencodeContainerDataDir,
-	})
-
-	if home, err := os.UserHomeDir(); err == nil {
-		hostOpencodeConfig := home + "/.config/opencode"
-		if info, err := os.Stat(hostOpencodeConfig); err == nil && info.IsDir() {
-			binds = append(binds, hostOpencodeConfig+":/root/.config/opencode:ro")
-		}
+	// Mount sessions volume only if data_dir is configured.
+	if cfg.Run.DataDir != "" {
+		volumeName := sandbox.ResourceName(hash, sandbox.SuffixSessions)
+		otherMounts = append(otherMounts, mount.Mount{
+			Type:   mount.TypeVolume,
+			Source: volumeName,
+			Target: cfg.Run.DataDir,
+		})
 	}
 
 	bindIP := cfg.Run.Port.Bind
@@ -78,10 +64,10 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 	labels := sandbox.DefaultLabels(hash, "", "")
 
 	cConf := &container.Config{
-		Image:      image,
-		Entrypoint: entrypoint,
-		Cmd:        cmd,
-		Env:        envSlice,
+		Image:        image,
+		Entrypoint:   cfg.Run.Entrypoint,
+		Cmd:          cfg.Run.Command,
+		Env:          envSlice,
 		WorkingDir:   cfg.Run.Workdir,
 		User:         cfg.Run.User,
 		ExposedPorts: nat.PortSet{containerPort: struct{}{}},
@@ -115,6 +101,8 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 
 // Start creates and starts a container named name running image.
 func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, name string) (*Result, error) {
+	containerPort := nat.Port(cfg.Run.Port.Container)
+
 	envSlice := make([]string, 0, len(cfg.Run.Env))
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
@@ -130,28 +118,14 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 		return nil, err
 	}
 
-	// Every sandbox gets a named volume for opencode session data.
-	// Docker creates the volume automatically if it does not exist, and
-	// reuses it on subsequent runs. The volume is NOT removed when the
-	// container is removed.
-	//
-	// Volume name uses the same hash-based base as the container, with the
-	// sessions suffix: opencode-sandbox-<hash>-sessions
-	volumeName := strings.TrimSuffix(name, sandbox.SuffixAgent) + sandbox.SuffixSessions
-	otherMounts = append(otherMounts, mount.Mount{
-		Type:   mount.TypeVolume,
-		Source: volumeName,
-		Target: opencodeContainerDataDir,
-	})
-
-	// Mount host opencode config directory read-only so the agent has access
-	// to auth.json, skills, and other host-side opencode configuration.
-	// Path: ~/.config/opencode → /root/.config/opencode (RO)
-	if home, err := os.UserHomeDir(); err == nil {
-		hostOpencodeConfig := home + "/.config/opencode"
-		if info, err := os.Stat(hostOpencodeConfig); err == nil && info.IsDir() {
-			binds = append(binds, hostOpencodeConfig+":/root/.config/opencode:ro")
-		}
+	// Mount sessions volume only if data_dir is configured.
+	if cfg.Run.DataDir != "" {
+		volumeName := strings.TrimSuffix(name, sandbox.SuffixAgent) + sandbox.SuffixSessions
+		otherMounts = append(otherMounts, mount.Mount{
+			Type:   mount.TypeVolume,
+			Source: volumeName,
+			Target: cfg.Run.DataDir,
+		})
 	}
 
 	bindIP := cfg.Run.Port.Bind
@@ -160,10 +134,10 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 	}
 
 	cConf := &container.Config{
-		Image:      image,
-		Entrypoint: entrypoint,
-		Cmd:        cmd,
-		Env:        envSlice,
+		Image:        image,
+		Entrypoint:   cfg.Run.Entrypoint,
+		Cmd:          cfg.Run.Command,
+		Env:          envSlice,
 		WorkingDir:   cfg.Run.Workdir,
 		User:         cfg.Run.User,
 		ExposedPorts: nat.PortSet{containerPort: struct{}{}},
@@ -216,7 +190,7 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 		Name:        actualName,
 		HostPort:    port,
 		Binds:       binds,
-		Volume:      volumeName,
+		Volume:      strings.TrimSuffix(name, sandbox.SuffixAgent) + sandbox.SuffixSessions,
 	}, nil
 }
 

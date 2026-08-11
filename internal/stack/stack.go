@@ -161,7 +161,7 @@ func (s *Stack) GetPort(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("inspect agent: %w", err)
 	}
 
-	portKey := nat.Port("4096/tcp")
+	portKey := nat.Port(s.config.Run.Port.Container)
 	if ports, ok := resp.NetworkSettings.Ports[portKey]; ok && len(ports) > 0 {
 		return ports[0].HostPort, nil
 	}

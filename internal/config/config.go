@@ -60,11 +60,15 @@ type Secret struct {
 }
 
 type RunConfig struct {
-	Env            map[string]string  `yaml:"env,omitempty"`
-	Mounts         []Mount            `yaml:"mounts,omitempty"`
-	Workdir        string             `yaml:"workdir,omitempty"`
-	User           string             `yaml:"user,omitempty"`
-	Port           PortConfig         `yaml:"port,omitempty"`
+	Env            map[string]string    `yaml:"env,omitempty"`
+	Mounts         []Mount              `yaml:"mounts,omitempty"`
+	Workdir        string               `yaml:"workdir,omitempty"`
+	User           string               `yaml:"user,omitempty"`
+	Port           PortConfig           `yaml:"port,omitempty"`
+	Entrypoint     []string             `yaml:"entrypoint,omitempty"`
+	Command        []string             `yaml:"command,omitempty"`
+	DataDir        string               `yaml:"data_dir,omitempty"`
+	AttachCmd      string               `yaml:"attach_cmd,omitempty"`
 	ReverseForward ReverseForwardConfig `yaml:"reverse_forward,omitempty"`
 }
 
@@ -76,7 +80,8 @@ type Mount struct {
 }
 
 type PortConfig struct {
-	Bind string `yaml:"bind,omitempty"`
+	Bind      string `yaml:"bind,omitempty"`
+	Container string `yaml:"container,omitempty"` // e.g. "4096/tcp" or "4096" (defaults to /tcp)
 }
 
 // DockerGlobalConfig holds docker settings at the file/global scope.

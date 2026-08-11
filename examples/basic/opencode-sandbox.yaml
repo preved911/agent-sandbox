@@ -22,6 +22,12 @@ profiles:
       #   OPENCODE_VERSION: "${OPENCODE_VERSION}"
 
     run:
+      # opencode-specific container settings.
+      entrypoint: ["opencode"]
+      command: ["serve", "--hostname=0.0.0.0", "--port=4096"]
+      data_dir: /root/.local/share/opencode
+      attach_cmd: "opencode attach %s"
+
       env:
         OPENCODE_TELEMETRY: "0"
         # Pass secrets at runtime with -e rather than storing them in config:
@@ -42,9 +48,15 @@ profiles:
           target: /root/.ssh
           readonly: true
 
+        # Share host opencode config (read-only) so the container picks up your settings.
+        - source: ~/.config/opencode
+          target: /root/.config/opencode
+          readonly: true
+
       workdir: /workspace
 
       port:
+        container: 4096/tcp
         # Override at runtime to expose to the LAN:
         #   opencode-sandbox run --bind 0.0.0.0
         bind: 127.0.0.1
