@@ -214,6 +214,7 @@ COREDNS_PID=$!
 echo "CoreDNS started (PID=$COREDNS_PID)"
 
 # --- Start reverse forwarding (socat) in background ---
+# Port-to-port forwarding
 if [ -n "${REVERSE_FORWARD_PORTS:-}" ]; then
     IFS=',' read -ra PORTS <<< "$REVERSE_FORWARD_PORTS"
     for port_pair in "${PORTS[@]}"; do
@@ -223,6 +224,20 @@ if [ -n "${REVERSE_FORWARD_PORTS:-}" ]; then
             # Listen on inside interface, forward to host via outside interface
             socat TCP-LISTEN:"$container_port",bind="$INSIDE_IP",fork,reuseaddr TCP:host.docker.internal:"$host_port" &
             echo "Reverse forward: $INSIDE_IP:$container_port -> host.docker.internal:$host_port"
+        fi
+    done
+fi
+
+# Socket-to-port forwarding
+if [ -n "${REVERSE_FORWARD_SOCKETS:-}" ]; then
+    IFS=',' read -ra SOCKS <<< "$REVERSE_FORWARD_SOCKETS"
+    for sock_pair in "${SOCKS[@]}"; do
+        socket_path=$(echo "$sock_pair" | cut -d: -f1 | xargs)
+        container_port=$(echo "$sock_pair" | cut -d: -f2 | xargs)
+        if [ -n "$socket_path" ] && [ -n "$container_port" ]; then
+            # Listen on inside interface, forward to Unix socket
+            socat TCP-LISTEN:"$container_port",bind="$INSIDE_IP",fork,reuseaddr UNIX-CONNECT:"$socket_path" &
+            echo "Socket forward: $INSIDE_IP:$container_port -> UNIX:$socket_path"
         fi
     done
 fi
