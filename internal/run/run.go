@@ -16,7 +16,6 @@ import (
 	"github.com/docker/go-connections/nat"
 
 	"github.com/preved911/opencode-sandbox/internal/config"
-	"github.com/preved911/opencode-sandbox/internal/docker"
 	"github.com/preved911/opencode-sandbox/internal/paths"
 	"github.com/preved911/opencode-sandbox/internal/sandbox"
 )
@@ -140,8 +139,6 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 // buildMounts splits config mounts into bind strings (HostConfig.Binds) and
 // structured mounts (HostConfig.Mounts for volume/tmpfs).
 func buildMounts(cfg *config.Config) (binds []string, mounts []mount.Mount, err error) {
-	remote := docker.IsRemoteHost(cfg.DockerHost)
-
 	for i, m := range cfg.Run.Mounts {
 		if m.Target == "" {
 			return nil, nil, fmt.Errorf("mount %d: target is required", i)
@@ -153,26 +150,13 @@ func buildMounts(cfg *config.Config) (binds []string, mounts []mount.Mount, err 
 				return nil, nil, fmt.Errorf("mount %d: bind source is required", i)
 			}
 
-			var src string
-			if remote {
-				// Remote daemon: expand env vars but require an absolute path — relative
-				// paths and ~ have no meaning on a remote host.
-				src = os.ExpandEnv(m.Source)
-				if src == "" {
-					return nil, nil, fmt.Errorf("mount %d: source expanded to empty string (unset variable?)", i)
-				}
-				if !strings.HasPrefix(src, "/") {
-					return nil, nil, fmt.Errorf("mount %d: remote bind source %q must be an absolute path", i, m.Source)
-				}
-			} else {
-				src, err = paths.Expand(m.Source, cfg.BaseDir())
-				if err != nil {
-					return nil, nil, fmt.Errorf("mount %d source: %w", i, err)
-				}
-				if cfg.DockerMacOS && runtime.GOOS == "darwin" {
-					if _, err := os.Stat(src); err != nil {
-						return nil, nil, fmt.Errorf("mount %d: source path %s does not exist on the macOS host", i, src)
-					}
+			src, err := paths.Expand(m.Source, cfg.BaseDir())
+			if err != nil {
+				return nil, nil, fmt.Errorf("mount %d source: %w", i, err)
+			}
+			if cfg.SharedPathsCheck && runtime.GOOS == "darwin" {
+				if _, err := os.Stat(src); err != nil {
+					return nil, nil, fmt.Errorf("mount %d: source path %s does not exist on the macOS host", i, src)
 				}
 			}
 

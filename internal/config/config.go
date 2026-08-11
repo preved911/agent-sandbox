@@ -3,13 +3,16 @@
 // Config files always use a profiles format:
 //
 //	docker:
-//	  host: tcp://...         # global docker host; overrides DOCKER_HOST for all profiles
-//	default_profile: go-dev   # used when -p/--profile is omitted
+//	  macos:
+//	    shared_paths_check: true   # macOS pre-flight validation (default: true)
+//	default_profile: go-dev        # used when -p/--profile is omitted
 //
 //	profiles:
 //	  go-dev:
 //	    build: ...
 //	    run: ...
+//	    firewall: ...
+//	    permissions: ...
 //
 // Load resolves an explicit path, then ./opencode-sandbox.yaml, then the
 // central default at $HOME/.config/opencode-sandbox/config.yaml
@@ -28,30 +31,27 @@ import (
 
 // Config is a single sandbox/profile configuration.
 type Config struct {
-	Name         string       `yaml:"name,omitempty"`
-	DockerHost   string       // effective docker host; set by loader, overridable by CLI flag
-	DockerMacOS  bool         // true when the Docker host is macOS-based (Docker Desktop / Colima / OrbStack)
-	Docker       DockerConfig `yaml:"docker,omitempty"`
-	Build        BuildConfig  `yaml:"build,omitempty"`
-	Run          RunConfig    `yaml:"run,omitempty"`
+	Name        string            `yaml:"name,omitempty"`
+	Build       BuildConfig       `yaml:"build,omitempty"`
+	Run         RunConfig         `yaml:"run,omitempty"`
+	Firewall    FirewallConfig    `yaml:"firewall,omitempty"`
+	Permissions PermissionsConfig `yaml:"permissions,omitempty"`
+
+	// Computed fields (not user config, set by loader)
+	SharedPathsCheck bool // from docker.macos.shared_paths_check (macOS only)
 
 	baseDir string
 }
 
-// DockerConfig holds per-profile docker settings.
-type DockerConfig struct {
-	Host       string `yaml:"host,omitempty"`
-	AttachHost string `yaml:"attach_host,omitempty"`
-}
-
 type BuildConfig struct {
-	Image      string            `yaml:"image,omitempty"`
-	Dockerfile string            `yaml:"dockerfile,omitempty"`
-	Context    string            `yaml:"context,omitempty"`
-	Target     string            `yaml:"target,omitempty"`
-	Args       map[string]string `yaml:"args,omitempty"`
-	Secrets    []Secret          `yaml:"secrets,omitempty"`
-	Pull       bool              `yaml:"pull,omitempty"`
+	Image           string            `yaml:"image,omitempty"`
+	Dockerfile      string            `yaml:"dockerfile,omitempty"`
+	Context         string            `yaml:"context,omitempty"`
+	Target          string            `yaml:"target,omitempty"`
+	Args            map[string]string `yaml:"args,omitempty"`
+	Secrets         []Secret          `yaml:"secrets,omitempty"`
+	Pull            bool              `yaml:"pull,omitempty"`
+	OpencodeVersion string            `yaml:"opencode_version,omitempty"` // "auto" (default) | "latest" | "0.21.0"
 }
 
 // Secret is a BuildKit-style build secret. Exactly one of Src or Env must be set.
@@ -62,11 +62,12 @@ type Secret struct {
 }
 
 type RunConfig struct {
-	Env     map[string]string `yaml:"env,omitempty"`
-	Mounts  []Mount           `yaml:"mounts,omitempty"`
-	Workdir string            `yaml:"workdir,omitempty"`
-	User    string            `yaml:"user,omitempty"`
-	Port    PortConfig        `yaml:"port,omitempty"`
+	Env            map[string]string  `yaml:"env,omitempty"`
+	Mounts         []Mount            `yaml:"mounts,omitempty"`
+	Workdir        string             `yaml:"workdir,omitempty"`
+	User           string             `yaml:"user,omitempty"`
+	Port           PortConfig         `yaml:"port,omitempty"`
+	ReverseForward ReverseForwardConfig `yaml:"reverse_forward,omitempty"`
 }
 
 type Mount struct {
@@ -80,17 +81,21 @@ type PortConfig struct {
 	Bind string `yaml:"bind,omitempty"`
 }
 
-// globalDockerConfig holds docker settings at the file/global scope.
-type globalDockerConfig struct {
-	Host  string `yaml:"host,omitempty"`
-	MacOS bool   `yaml:"macos,omitempty"`
+// DockerGlobalConfig holds docker settings at the file/global scope.
+type DockerGlobalConfig struct {
+	MacOS MacOSConfig `yaml:"macos,omitempty"`
+}
+
+// MacOSConfig holds macOS-specific Docker settings.
+type MacOSConfig struct {
+	SharedPathsCheck *bool `yaml:"shared_paths_check,omitempty"` // default: true; false to skip
 }
 
 // file is the on-disk shape.
 type file struct {
-	Docker         globalDockerConfig `yaml:"docker,omitempty"`
-	DefaultProfile string             `yaml:"default_profile,omitempty"`
-	Profiles       map[string]*Config `yaml:"profiles"`
+	Docker         DockerGlobalConfig  `yaml:"docker,omitempty"`
+	DefaultProfile string              `yaml:"default_profile,omitempty"`
+	Profiles       map[string]*Config  `yaml:"profiles"`
 }
 
 // Load resolves the right config file and returns the selected sandbox.
@@ -171,12 +176,14 @@ func loadFile(path, profile string) (*Config, error) {
 	if c.Name == "" {
 		c.Name = name
 	}
-	if c.Docker.Host != "" {
-		c.DockerHost = c.Docker.Host
+
+	// macOS shared paths check: default true
+	if f.Docker.MacOS.SharedPathsCheck != nil {
+		c.SharedPathsCheck = *f.Docker.MacOS.SharedPathsCheck
 	} else {
-		c.DockerHost = f.Docker.Host
+		c.SharedPathsCheck = true
 	}
-	c.DockerMacOS = f.Docker.MacOS
+
 	c.baseDir = baseDir
 	return c, nil
 }
@@ -184,12 +191,7 @@ func loadFile(path, profile string) (*Config, error) {
 // BaseDir is the directory relative paths in this config are resolved against.
 func (c *Config) BaseDir() string { return c.baseDir }
 
-// DockerHostFrom tries to load the config and returns the effective docker host.
-// Returns empty string if the config cannot be loaded (e.g. no config file present).
-func DockerHostFrom(explicitPath, profile string) string {
-	cfg, err := Load(explicitPath, profile)
-	if err != nil {
-		return ""
-	}
-	return cfg.DockerHost
+// Validate performs validation checks on the loaded config.
+func (c *Config) Validate() error {
+	return Validate(c)
 }

@@ -33,9 +33,6 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if rf.dockerHost != "" {
-				cfg.DockerHost = rf.dockerHost
-			}
 			for _, e := range envOverrides {
 				k, v, err := parseEnvFlag(e)
 				if err != nil {
@@ -79,7 +76,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 		}
 
-		cli, err := docker.NewClient(cfg.DockerHost)
+		cli, err := docker.NewClient("")
 		if err != nil {
 			return fmt.Errorf("docker client: %w", err)
 		}
@@ -101,15 +98,11 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 			fmt.Fprintf(out, "volume: %s\n", res.Volume)
 
-			host := cfg.Docker.AttachHost
-			if host == "" {
-				host = docker.AttachHost(docker.EffectiveHost(cfg.DockerHost))
-			}
-			fmt.Fprintf(out, "opencode attach http://%s:%d\n", host, res.HostPort)
+			fmt.Fprintf(out, "opencode attach http://127.0.0.1:%d\n", res.HostPort)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&nameOverride, "name", "", "container name (default: <profile>-<random>)")
+	cmd.Flags().StringVar(&nameOverride, "name", "", "container name (default: <hash>-agent)")
 	cmd.Flags().BoolVar(&noBuild, "no-build", false, "skip the build step (image must already exist)")
 	cmd.Flags().BoolVar(&pull, "pull", false, "pass --pull to docker build")
 	cmd.Flags().StringArrayVarP(&envOverrides, "env", "e", nil, "set or override an env var (KEY=VALUE); repeatable")
