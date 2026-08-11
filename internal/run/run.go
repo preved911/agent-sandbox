@@ -64,9 +64,9 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 	// reuses it on subsequent runs. The volume is NOT removed when the
 	// container is removed.
 	//
-	// The volume name always matches the container name so that sessions
-	// are tied to the specific sandbox instance.
-	volumeName := name + "-sessions"
+	// Volume name uses the same hash-based base as the container, with the
+	// sessions suffix: opencode-sandbox-<hash>-sessions
+	volumeName := strings.TrimSuffix(name, sandbox.SuffixAgent) + sandbox.SuffixSessions
 	otherMounts = append(otherMounts, mount.Mount{
 		Type:   mount.TypeVolume,
 		Source: volumeName,
@@ -88,7 +88,7 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 		ExposedPorts: nat.PortSet{containerPort: struct{}{}},
 		Labels: map[string]string{
 			sandbox.Label:     "true",
-			sandbox.LabelName: cfg.Name,
+			sandbox.LabelName: name,
 		},
 	}
 	hConf := &container.HostConfig{
