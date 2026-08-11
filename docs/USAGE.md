@@ -146,10 +146,6 @@ profiles:
       attach_cmd: "opencode attach %s"
 
       mounts:
-        # Project directory (RW — agent edits files here)
-        - source: ~/workspace/myapp
-          target: /workspace
-
         # Host opencode config (RO — inherits settings)
         - source: ~/.config/opencode
           target: /root/.config/opencode
@@ -176,6 +172,8 @@ profiles:
         bind: 127.0.0.1
 ```
 
+> **Note:** The current working directory is automatically mounted at `run.workdir` (default `/workspace`). You don't need to declare it in `run.mounts`.
+
 **Override permissions at runtime (without changing config):**
 
 ```bash
@@ -194,9 +192,6 @@ profiles:
       command: ["--port", "4096"]
 
       mounts:
-        - source: ~/workspace/myapp
-          target: /workspace
-
         # Claude Code config (RO)
         - source: ~/.claude
           target: /root/.claude
@@ -220,6 +215,8 @@ profiles:
         container: 4096/tcp
         bind: 127.0.0.1
 ```
+
+> **Note:** The current working directory is automatically mounted at `run.workdir` (default `/workspace`). You don't need to declare it in `run.mounts`.
 
 ### Profile selection
 
@@ -440,9 +437,6 @@ profiles:
     run:
       entrypoint: ["opencode"]
       command: ["serve", "--hostname=0.0.0.0", "--port=4096"]
-      mounts:
-        - source: $PWD
-          target: /workspace
       workdir: /workspace
       port:
         container: 4096/tcp
@@ -469,9 +463,6 @@ profiles:
     run:
       entrypoint: ["opencode"]
       command: ["serve", "--hostname=0.0.0.0", "--port=4096"]
-      mounts:
-        - source: $PWD
-          target: /workspace
       workdir: /workspace
       port:
         container: 4096/tcp
@@ -499,9 +490,6 @@ profiles:
     run:
       entrypoint: ["opencode"]
       command: ["serve", "--hostname=0.0.0.0", "--port=4096"]
-      mounts:
-        - source: $PWD
-          target: /workspace
       workdir: /workspace
       port:
         container: 4096/tcp
@@ -538,9 +526,6 @@ profiles:
       attach_cmd: "opencode attach %s"
       env:
         GOFLAGS: "-mod=mod"
-      mounts:
-        - source: $PWD
-          target: /workspace
       workdir: /workspace
       port:
         container: 4096/tcp
@@ -557,9 +542,6 @@ profiles:
       attach_cmd: "opencode attach %s"
       env:
         NODE_ENV: development
-      mounts:
-        - source: $PWD
-          target: /workspace
       workdir: /workspace
       port:
         container: 4096/tcp

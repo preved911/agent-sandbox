@@ -196,7 +196,30 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 
 // buildMounts splits config mounts into bind strings (HostConfig.Binds) and
 // structured mounts (HostConfig.Mounts for volume/tmpfs).
+//
+// The current working directory is always mounted at run.workdir (RW) unless
+// a user-defined mount already targets that path.
 func buildMounts(cfg *config.Config) (binds []string, mounts []mount.Mount, err error) {
+	// Auto-mount cwd → workdir. Skip if user already mounts the workdir target.
+	workdir := cfg.Run.Workdir
+	if workdir == "" {
+		workdir = "/workspace"
+	}
+	workdirMounted := false
+	for _, m := range cfg.Run.Mounts {
+		if m.Target == workdir {
+			workdirMounted = true
+			break
+		}
+	}
+	if !workdirMounted {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, nil, fmt.Errorf("get working directory: %w", err)
+		}
+		binds = append(binds, cwd+":"+workdir)
+	}
+
 	for i, m := range cfg.Run.Mounts {
 		if m.Target == "" {
 			return nil, nil, fmt.Errorf("mount %d: target is required", i)

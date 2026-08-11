@@ -23,9 +23,6 @@ profiles:
       dockerfile: ./Dockerfile
       context: .
     run:
-      mounts:
-        - source: $PWD
-          target: /workspace
       workdir: /workspace
       port:
         bind: 127.0.0.1
@@ -113,8 +110,6 @@ profiles:
       env:
         OPENCODE_TELEMETRY: "0"
       mounts:
-        - source: $PWD
-          target: /workspace
         - source: ~/.gitconfig
           target: /root/.gitconfig
           readonly: true
