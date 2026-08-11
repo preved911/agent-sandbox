@@ -11,7 +11,6 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/spf13/cobra"
 
-	"github.com/preved911/opencode-sandbox/internal/config"
 	"github.com/preved911/opencode-sandbox/internal/docker"
 	"github.com/preved911/opencode-sandbox/internal/sandbox"
 )
@@ -23,11 +22,7 @@ func newPsCmd(rf *rootFlags) *cobra.Command {
 		Short: "List sandbox containers (filtered by opencode-sandbox label)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			host := rf.dockerHost
-			if host == "" {
-				host = config.DockerHostFrom(rf.configPath, rf.profile)
-			}
-			cli, err := docker.NewClient(host)
+			cli, err := docker.NewClient("")
 			if err != nil {
 				return err
 			}

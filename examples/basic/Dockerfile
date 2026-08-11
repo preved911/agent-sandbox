@@ -1,6 +1,7 @@
 FROM ubuntu:24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG OPENCODE_VERSION=latest
 
 # Common dev tools: git for SCM, curl/unzip for the opencode installer,
 # ca-certificates so TLS to AI providers works inside the container.
@@ -19,7 +20,7 @@ RUN curl -fsSL https://opencode.ai/install | bash
 ENV PATH="/root/.local/bin:$PATH"
 
 # opencode serve listens on this port inside the container.
-# container-sandbox publishes it to a random host port automatically.
+# opencode-sandbox publishes it to a random host port automatically.
 EXPOSE 4096
 
 WORKDIR /workspace

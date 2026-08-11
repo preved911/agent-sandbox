@@ -9,7 +9,6 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/spf13/cobra"
 
-	"github.com/preved911/opencode-sandbox/internal/config"
 	"github.com/preved911/opencode-sandbox/internal/docker"
 	"github.com/preved911/opencode-sandbox/internal/sandbox"
 )
@@ -27,11 +26,7 @@ func newRmCmd(rf *rootFlags) *cobra.Command {
 				return fmt.Errorf("specify one or more containers, or pass --all")
 			}
 
-			host := rf.dockerHost
-			if host == "" {
-				host = config.DockerHostFrom(rf.configPath, rf.profile)
-			}
-			cli, err := docker.NewClient(host)
+			cli, err := docker.NewClient("")
 			if err != nil {
 				return err
 			}

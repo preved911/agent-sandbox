@@ -20,9 +20,6 @@ func newBuildCmd(rf *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if rf.dockerHost != "" {
-				cfg.DockerHost = rf.dockerHost
-			}
 			if cfg.Build.Image != "" {
 				return fmt.Errorf("config has build.image set; nothing to build")
 			}

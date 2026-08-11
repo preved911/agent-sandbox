@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,8 +12,9 @@ import (
 	"github.com/preved911/opencode-sandbox/internal/config"
 	"github.com/preved911/opencode-sandbox/internal/docker"
 	"github.com/preved911/opencode-sandbox/internal/paths"
-	"github.com/preved911/opencode-sandbox/internal/run"
+	"github.com/preved911/opencode-sandbox/internal/preflight"
 	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/opencode-sandbox/internal/stack"
 )
 
 func newRunCmd(rf *rootFlags) *cobra.Command {
@@ -23,18 +25,16 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 		envOverrides   []string
 		mountOverrides []string
 		bindOverride   string
+		attachCmd      string
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Build and start a sandbox, then print the opencode attach URL",
+		Short: "Create (if needed), start, and attach to a sandbox",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(rf.configPath, rf.profile)
 			if err != nil {
 				return err
-			}
-			if rf.dockerHost != "" {
-				cfg.DockerHost = rf.dockerHost
 			}
 			for _, e := range envOverrides {
 				k, v, err := parseEnvFlag(e)
@@ -57,64 +57,119 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				cfg.Run.Port.Bind = bindOverride
 			}
 
-		ctx := cmd.Context()
+			ctx := cmd.Context()
 
-		// Compute the sandbox hash from the current working directory.
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("get working directory: %w", err)
-		}
-		hash := sandbox.HashPath(cwd)
-
-		var image string
-		switch {
-		case cfg.Build.Image != "":
-			image = cfg.Build.Image
-		case noBuild:
-			image = "opencode-sandbox/" + cfg.Name + ":latest"
-		default:
-			image, err = build.ImageBuild(ctx, cfg, build.Options{Pull: pull})
+			// Compute the sandbox hash from the current working directory.
+			cwd, err := os.Getwd()
 			if err != nil {
-				return err
+				return fmt.Errorf("get working directory: %w", err)
 			}
-		}
+			hash := sandbox.HashPath(cwd)
 
-		cli, err := docker.NewClient(cfg.DockerHost)
-		if err != nil {
-			return fmt.Errorf("docker client: %w", err)
-		}
-		defer cli.Close()
-
-		name := nameOverride
-		if name == "" {
-			name = sandbox.ResourceName(hash, sandbox.SuffixAgent)
-		}
-
-			res, err := run.Start(ctx, cli, cfg, image, name)
+			cli, err := docker.NewClient("")
 			if err != nil {
-				return err
+				return fmt.Errorf("docker client: %w", err)
+			}
+			defer cli.Close()
+
+			// Pre-flight: verify cwd is in Docker's shared paths (macOS only).
+			if cfg.SharedPathsCheck {
+				if err := preflight.SharedPathsCheck(cwd); err != nil {
+					return err
+				}
 			}
 
+			s := stack.New(cli, hash, cfg)
+
+			// Check if stack already exists.
+			exists, err := s.Exists(ctx)
+			if err != nil {
+				return fmt.Errorf("check sandbox: %w", err)
+			}
+
+			if !exists {
+				// Sandbox doesn't exist — build, create, start.
+				var image string
+				switch {
+				case cfg.Build.Image != "":
+					image = cfg.Build.Image
+				case noBuild:
+					image = "opencode-sandbox/" + cfg.Name + ":latest"
+				default:
+					image, err = build.ImageBuild(ctx, cfg, build.Options{Pull: pull})
+					if err != nil {
+						return err
+					}
+				}
+
+				if err := s.Create(ctx, image); err != nil {
+					return fmt.Errorf("create sandbox: %w", err)
+				}
+				if err := s.Start(ctx); err != nil {
+					return fmt.Errorf("start sandbox: %w", err)
+				}
+			} else {
+				// Sandbox exists — start if stopped.
+				status, err := s.Status(ctx)
+				if err != nil {
+					return fmt.Errorf("sandbox status: %w", err)
+				}
+				if status.Agent != "running" {
+					if err := s.Start(ctx); err != nil {
+						return fmt.Errorf("start sandbox: %w", err)
+					}
+				}
+			}
+
+			// Get the published port.
+			port, err := s.GetPort(ctx)
+			if err != nil {
+				return fmt.Errorf("get port: %w", err)
+			}
+
+			// Determine the bind IP for the URL.
+			bindIP := cfg.Run.Port.Bind
+			if bindIP == "" || bindIP == "0.0.0.0" {
+				bindIP = "127.0.0.1"
+			}
+
+			url := fmt.Sprintf("http://%s:%s", bindIP, port)
+
+			// Execute attach command.
 			out := cmd.OutOrStdout()
-			for _, b := range res.Binds {
-				fmt.Fprintf(out, "mount: %s\n", b)
+			if attachCmd != "" {
+				cmdStr := strings.ReplaceAll(attachCmd, "%s", url)
+				fmt.Fprintf(out, "$ %s\n", cmdStr)
+				c := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+				c.Stdout = out
+				c.Stderr = cmd.ErrOrStderr()
+				c.Stdin = os.Stdin
+				return c.Run()
 			}
-			fmt.Fprintf(out, "volume: %s\n", res.Volume)
 
-			host := cfg.Docker.AttachHost
-			if host == "" {
-				host = docker.AttachHost(docker.EffectiveHost(cfg.DockerHost))
+			// Default: run opencode attach.
+			fmt.Fprintf(out, "opencode attach %s\n", url)
+			c := exec.CommandContext(ctx, "opencode", "attach", url)
+			c.Stdout = out
+			c.Stderr = cmd.ErrOrStderr()
+			c.Stdin = os.Stdin
+			if err := c.Run(); err != nil {
+				if execErr, ok := err.(*exec.Error); ok && execErr.Err == exec.ErrNotFound {
+					fmt.Fprintf(out, "\nopencode not found in PATH. Connect manually:\n  opencode attach %s\n", url)
+					return nil
+				}
+				return err
 			}
-			fmt.Fprintf(out, "opencode attach http://%s:%d\n", host, res.HostPort)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&nameOverride, "name", "", "container name (default: <profile>-<random>)")
+	cmd.Flags().StringVar(&nameOverride, "name", "", "container name (default: <hash>-agent)")
 	cmd.Flags().BoolVar(&noBuild, "no-build", false, "skip the build step (image must already exist)")
 	cmd.Flags().BoolVar(&pull, "pull", false, "pass --pull to docker build")
 	cmd.Flags().StringArrayVarP(&envOverrides, "env", "e", nil, "set or override an env var (KEY=VALUE); repeatable")
 	cmd.Flags().StringArrayVarP(&mountOverrides, "mount", "v", nil, "append a mount (source:target[:ro]); repeatable")
 	cmd.Flags().StringVar(&bindOverride, "bind", "", "override run.port.bind (e.g. 0.0.0.0)")
+	cmd.Flags().StringVar(&attachCmd, "cmd", "", "custom attach command (use %%s for URL placeholder)")
 	return cmd
 }
 

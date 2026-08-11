@@ -15,30 +15,22 @@
 #   opencode-sandbox -p go-dev run --bind 0.0.0.0 -e ANTHROPIC_API_KEY=sk-ant-...
 
 docker:
-  # host: tcp://build-box:2375   # applies to all profiles; override with --docker-host
-  # macos: true                  # set when the Docker host is macOS-based (Docker Desktop / Colima / OrbStack)
-  #                              # enables early validation that bind mount sources exist on the macOS host
+  macos:
+    shared_paths_check: true   # validate Docker Desktop shared paths on macOS
 
 default_profile: go-dev
 
 profiles:
 
   go-dev:
-    docker:
-      # host: tcp://go-build-box:2375   # overrides global docker.host for this profile only
     build:
       dockerfile: ./Dockerfile-go
       context: .
-      args:
-        OPENCODE_VERSION: latest
     run:
       env:
         GOFLAGS: "-mod=mod"
         OPENCODE_TELEMETRY: "0"
-        # Pass secrets at runtime: opencode-sandbox run -e ANTHROPIC_API_KEY=sk-ant-...
       mounts:
-        # $PWD binds the directory you invoke the tool from, so opencode
-        # sees the same files as your editor.
         - source: $PWD
           target: /workspace
         - source: ~/.gitconfig
@@ -50,18 +42,21 @@ profiles:
       workdir: /workspace
       port:
         bind: 127.0.0.1
+    firewall:
+      network:
+        default: deny
+        dns:
+          default: allow
+          upstream: [1.1.1.1, 8.8.8.8]
 
   node-dev:
     build:
       dockerfile: ./Dockerfile-node
       context: .
-      args:
-        OPENCODE_VERSION: latest
     run:
       env:
         NODE_ENV: development
         OPENCODE_TELEMETRY: "0"
-        # Pass secrets at runtime: opencode-sandbox run -e ANTHROPIC_API_KEY=sk-ant-...
       mounts:
         - source: $PWD
           target: /workspace
@@ -77,3 +72,9 @@ profiles:
       workdir: /workspace
       port:
         bind: 127.0.0.1
+    firewall:
+      network:
+        default: deny
+        dns:
+          default: allow
+          upstream: [1.1.1.1, 8.8.8.8]

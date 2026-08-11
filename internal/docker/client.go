@@ -1,12 +1,10 @@
-// Package docker builds a Docker SDK client and derives the host name used
-// in the printed "opencode attach http://<host>:<port>" line.
+// Package docker builds a Docker SDK client.
 package docker
 
 import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 
@@ -16,7 +14,7 @@ import (
 // NewClient builds a Docker client.
 //
 // Host resolution order:
-//  1. host argument (from config docker.host or --docker-host flag)
+//  1. host argument (from config docker.host)
 //  2. DOCKER_HOST environment variable
 //  3. active Docker CLI context (DOCKER_CONTEXT env or currentContext in ~/.docker/config.json)
 //  4. SDK default (platform socket)
@@ -30,15 +28,6 @@ func NewClient(host string) (*client.Client, error) {
 		opts = append(opts, client.FromEnv)
 	}
 	return client.NewClientWithOpts(opts...)
-}
-
-// EffectiveHost reports the Docker host string that the client will actually
-// use, applying the same precedence as NewClient.
-func EffectiveHost(configHost string) string {
-	if configHost != "" {
-		return configHost
-	}
-	return resolvedHost()
 }
 
 // resolvedHost returns the Docker host from the environment or the active
@@ -106,51 +95,4 @@ func contextEndpointHost(configDir, name string) string {
 	}
 	_ = json.Unmarshal(data, &meta)
 	return meta.Endpoints.Docker.Host
-}
-
-// IsRemoteHost reports whether host refers to a remote Docker daemon
-// (TCP, SSH, HTTP/HTTPS) rather than a local socket.
-func IsRemoteHost(host string) bool {
-	if host == "" {
-		return false
-	}
-	u, err := url.Parse(host)
-	if err != nil {
-		return false
-	}
-	switch u.Scheme {
-	case "tcp", "ssh", "http", "https":
-		return true
-	default:
-		return false
-	}
-}
-
-// AttachHost derives the host portion of the attach URL from a Docker host URL.
-//
-//	tcp://1.2.3.4:2375       → 1.2.3.4
-//	ssh://user@box.internal  → box.internal
-//	unix:// / npipe:// / "" → 127.0.0.1
-//
-// A wildcard (0.0.0.0, ::) collapses to 127.0.0.1 so the printed URL is
-// actually dialable.
-func AttachHost(dockerHost string) string {
-	const local = "127.0.0.1"
-	if dockerHost == "" {
-		return local
-	}
-	u, err := url.Parse(dockerHost)
-	if err != nil {
-		return local
-	}
-	switch u.Scheme {
-	case "tcp", "ssh", "http", "https":
-		h := u.Hostname()
-		if h == "" || h == "0.0.0.0" || h == "::" {
-			return local
-		}
-		return h
-	default:
-		return local
-	}
 }

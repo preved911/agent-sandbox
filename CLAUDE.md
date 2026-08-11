@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when writing code in this repository.
 
 ## Commands
 
@@ -22,50 +22,85 @@ There is no Makefile. The binary entry point is `cmd/opencode-sandbox/main.go`.
 
 ## Architecture
 
-The tool builds and runs Docker containers that serve an opencode `serve` endpoint, then prints `opencode attach http://<host>:<port>` so a local client can connect.
+The tool creates isolated Docker sandboxes for opencode agents. Each sandbox has 3 resources: an agent container, a firewall container (nftables + CoreDNS), and a sessions volume.
 
-### Config loading (`internal/config`)
+### Package layout
 
-Config files are always **profiles-based**:
+- `cmd/opencode-sandbox/main.go` — Entry point, signal handling
+- `internal/cli/` — Cobra commands: root, run, build, create, start, stop, logs, ps, rm, sessions (ps/rm), config
+- `internal/config/` — Config loading, types, validation
+  - `config.go` — Profile-based config loader (explicit path → ./opencode-sandbox.yaml → $XDG_CONFIG_HOME)
+  - `firewall.go` — NetworkConfig, CIDRRules, DNSRules types
+  - `forward.go` — ReverseForwardConfig (ports + sockets)
+  - `validation.go` — CIDR parsing, conflict detection, port validation
+- `internal/sandbox/` — Naming (hash-based), labels, constants
+  - `HashPath(absPath) → 8 hex chars` — deterministic sandbox identity
+  - `ResourceName(hash, suffix) → opencode-sandbox-<hash>-<suffix>`
+- `internal/docker/` — Docker SDK client wrapper (`NewClient`)
+- `internal/run/` — Agent container creation + start on isolated network
+- `internal/build/` — Docker image build (shells out to `docker build`)
+- `internal/network/` — Isolated bridge network create/remove/exists
+- `internal/stack/` — Stack orchestration (create/start/stop/remove all resources)
+- `internal/preflight/` — macOS shared-paths validation (Docker Desktop settings)
+- `firewall/` — Firewall Docker image (Dockerfile, entrypoint.sh, Go generators)
+  - `nftables.go` — deny-before-allow nftables rule generation
+  - `coredns.go` — CoreDNS config generation
+  - `forward.go` — socat reverse forwarders + implicit OUTPUT rules
+  - `firewall.go` — FirewallEnv() generates container env vars from config
+
+### Key design decisions
+
+- **Naming:** hash-only (`opencode-sandbox-<hash>-<suffix>`), SHA-256[:8] of absolute cwd path
+- **3 resources per sandbox:** agent container + firewall container + sessions volume
+- **Network isolation:** agent DNS → firewall; nftables enforces CIDR/DNS rules; deny wins
+- **Reverse forwarding:** socat in firewall, implicit nftables OUTPUT rules auto-generated
+- **Config loading:** profiles-based, deep-merge (project overrides global)
+
+### Config schema (YAML)
 
 ```yaml
 docker:
-  host: tcp://...          # global; forwarded as DOCKER_HOST to all subprocesses
-default_profile: go-dev    # used when -p is omitted and only one profile exists
+  macos:
+    shared_paths_check: true
 
 profiles:
-  go-dev:
-    docker:
-      host: tcp://...      # overrides global docker.host for this profile only
-      attach_host: ...     # host used in the printed attach URL only
-    build: ...
+  <name>:
+    build:
+      dockerfile: string
+      context: string
+      args: {KEY: "${ENV_VAR}"}  # env vars expanded from host shell
     run:
-      env: ...
-      mounts: ...
-      port:
-        bind: 127.0.0.1
+      env: map[string]string
+      mounts: [{source, target, readonly?}]
+      workdir: string
+      port: {bind: string}
+      reverse_forward:
+        ports: [{host: int, container: int}]
+        sockets: [{socket: string, container: int}]
+    firewall:
+      network:
+        default: "deny" | "allow"
+        cidr: {allow: [string], deny: [string]}
+        dns:
+          default: "deny" | "allow"
+          allow: [string]
+          deny: [string]
+          upstream: [string]
+        auto_pin_resolved: bool
+    reverse_forward:
+      ports: [{host: int, container: int}]
+      sockets: [{socket: string, container: int}]
 ```
 
-`config.Load` resolves the file in order: explicit `-c` path → `./opencode-sandbox.yaml` → `$XDG_CONFIG_HOME/opencode-sandbox/config.yaml`. It auto-selects the profile if only one exists. The loaded `Config.DockerHost` is resolved in priority order: CLI `--docker-host`/`-H` flag → profile `docker.host` → global `docker.host`.
+### Docker SDK v27.3.1 gotchas
 
-### CLI layer (`internal/cli`)
+- `ContainerInspect` returns `types.ContainerJSON` (from `github.com/docker/docker/api/types`), NOT `container.InspectResponse`
+- `ContainerStop` takes `container.StopOptions{Timeout: *int}` — must convert `time.Duration` to `int` seconds
+- `container.StartOptions` is `{}` (no fields needed for basic start)
+- Network filter: `filters.NewArgs(filters.Arg("name", name))`
+- DNS goes in `container.HostConfig.DNS []string`, NOT in `network.EndpointSettings.DNS`
+- Port map keys are `nat.Port` type (e.g. `nat.Port("4096/tcp")`)
 
-`rootFlags` (config path, profile, docker host) are persistent flags threaded into all subcommands. `run` and `build` call `config.Load` then apply flag overrides (`dockerHost`, `--env`/`-e`, `--mount`/`-v`, `--bind`) before executing. `ps` and `rm` skip config loading and use `rf.dockerHost` directly with `docker.NewClient`.
+### Issue closure policy
 
-### Build vs run split
-
-- **`internal/build`** — shells out to `docker build` (uses BuildKit secrets), sets `DOCKER_HOST` from `cfg.DockerHost`
-- **`internal/run`** — uses the Docker Go SDK to create/start the container, publish port 4096/tcp to a random host port, and return the assigned port; when `docker.macos: true` is set in config and the tool runs on macOS (`runtime.GOOS == "darwin"`), bind mount sources are validated against the local macOS filesystem before the API call to surface missing-path errors early
-- **`internal/docker`** — thin wrapper: `NewClient` (SDK client), `EffectiveHost` (config → env fallback), `AttachHost` (derives printable hostname from a Docker host URL); `NewClient` resolves the daemon endpoint in the same order as the Docker CLI: explicit host → `DOCKER_HOST` env → active Docker context (`DOCKER_CONTEXT` env or `currentContext` in `~/.docker/config.json`) → SDK default
-
-### Safety invariant
-
-Every container created by the tool carries the label `opencode-sandbox=true` (constant in `internal/sandbox`). `ps` filters by this label; `rm` refuses to touch containers that don't have it.
-
-### Examples (`examples/`)
-
-After any change that affects config schema, CLI flags, or runtime behaviour, update the files under `examples/` to reflect it. The examples are the primary user-facing reference — keep their comments and field choices consistent with the current feature set.
-
-### Path resolution (`internal/paths`)
-
-`paths.Expand` handles `~`, `~/`, `$VAR`, and relative paths (resolved against the config file's directory, not CWD) uniformly across mount sources, Dockerfile paths, and build contexts.
+Issues should ONLY be closed when the PR is merged to main. Do NOT close issues when pushing to a PR branch.

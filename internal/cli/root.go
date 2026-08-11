@@ -15,7 +15,6 @@ func Execute(ctx context.Context) error {
 type rootFlags struct {
 	configPath string
 	profile    string
-	dockerHost string
 }
 
 func newRootCmd() *cobra.Command {
@@ -29,11 +28,16 @@ func newRootCmd() *cobra.Command {
 	}
 	cmd.PersistentFlags().StringVarP(&rf.configPath, "config", "c", "", "config file path (default: ./opencode-sandbox.yaml → $HOME/.config/opencode-sandbox/config.yaml)")
 	cmd.PersistentFlags().StringVarP(&rf.profile, "profile", "p", "", "profile name (overrides default_profile in config)")
-	cmd.PersistentFlags().StringVarP(&rf.dockerHost, "docker-host", "H", "", "docker daemon to connect to (overrides docker.host in config and DOCKER_HOST)")
 
 	cmd.AddCommand(
 		newRunCmd(rf),
 		newBuildCmd(rf),
+		newCreateCmd(rf),
+		newStartCmd(rf),
+		newStopCmd(rf),
+		newLogsCmd(rf),
+		newSessionsCmd(rf),
+		newConfigCmd(rf),
 		newPsCmd(rf),
 		newRmCmd(rf),
 	)

@@ -1,23 +1,25 @@
+# Basic profile example. Place at ./opencode-sandbox.yaml in your project.
+#
+# Usage:
+#   opencode-sandbox run -e ANTHROPIC_API_KEY=sk-ant-...
+#
+# Override per-invocation:
+#   opencode-sandbox run -v ~/otherproject:/workspace --bind 0.0.0.0
+
 docker:
-  # host: tcp://1.2.3.4:2375   # remote daemon; falls back to $DOCKER_HOST or local socket
-  # macos: true                 # set when the Docker host is macOS-based (Docker Desktop / Colima / OrbStack)
-  #                             # enables early validation that bind mount sources exist on the macOS host
+  macos:
+    shared_paths_check: true   # validate Docker Desktop shared paths on macOS
 
 # default_profile: basic        # uncomment to skip -p/--profile flag
 
 profiles:
   basic:
-    docker:
-      # attach_host: my-box.local   # host in the printed URL; auto-derived from `host` if omitted
-
     build:
       dockerfile: ./Dockerfile
       context: .
-      # Inject the AI provider key as a build-time secret so it is never baked into
-      # image layers.  The Dockerfile can consume it via RUN --mount=type=secret,id=api-key.
-      # secrets:
-      #   - id: api-key
-      #     env: ANTHROPIC_API_KEY
+      # Pass version info via build args (env vars expanded from host shell):
+      # args:
+      #   OPENCODE_VERSION: "${OPENCODE_VERSION}"
 
     run:
       env:
@@ -27,8 +29,6 @@ profiles:
 
       mounts:
         # Bind the project directory you want opencode to work in.
-        # Override per-invocation with -v:
-        #   opencode-sandbox run -v ~/otherproject:/workspace
         - source: ~/workspace
           target: /workspace
 
@@ -48,3 +48,19 @@ profiles:
         # Override at runtime to expose to the LAN:
         #   opencode-sandbox run --bind 0.0.0.0
         bind: 127.0.0.1
+
+    firewall:
+      network:
+        default: deny
+        cidr:
+          allow:
+            - 10.0.0.0/8        # private network
+            - 172.16.0.0/12     # private network
+          deny: []
+        dns:
+          default: allow
+          allow: []
+          deny: []
+          upstream:
+            - 1.1.1.1
+            - 8.8.8.8

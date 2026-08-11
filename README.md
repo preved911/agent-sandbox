@@ -1,6 +1,6 @@
 # opencode-sandbox
 
-Builds and runs isolated Docker containers that expose an [opencode](https://opencode.ai) `serve` endpoint, so you can attach a local opencode client to a sandboxed run.
+Docker-based sandbox for [opencode](https://opencode.ai) agents. Each sandbox runs in an isolated container with its own network firewall, so agents can't reach the host or external services unless you explicitly allow it.
 
 ```
 opencode attach http://127.0.0.1:49312
@@ -17,8 +17,6 @@ go install github.com/preved911/opencode-sandbox/cmd/opencode-sandbox@latest
 Create `opencode-sandbox.yaml` in your project:
 
 ```yaml
-default_profile: default
-
 profiles:
   default:
     build:
@@ -39,16 +37,35 @@ Then run:
 opencode-sandbox run -e ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-The command builds the image, starts the container, and prints the attach URL.
+The command builds the image, creates the sandbox (agent container + firewall + network), and prints the attach URL.
+
+## Architecture
+
+Each sandbox consists of 3 Docker resources:
+
+| Resource | Purpose |
+|----------|---------|
+| **Agent container** | Runs opencode CLI with your project mounted |
+| **Firewall container** | Runs nftables + CoreDNS; all network flows through it |
+| **Sessions volume** | Durable opencode session data (survives container removal) |
+
+The agent container's DNS is pointed at the firewall, which enforces network rules (CIDR allow/deny, domain allow/deny) and forwards allowed traffic.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `run` | Build (unless `--no-build`) and start a sandbox, print the attach URL |
-| `build` | Build the sandbox image without starting a container |
+| `run` | Create (if needed), start, and attach to a sandbox |
+| `create` | Create sandbox resources without starting or attaching |
+| `start` | Start a stopped sandbox |
+| `stop` | Stop a running sandbox |
+| `build` | Build the sandbox image without creating a container |
 | `ps` | List sandbox containers (`-a` to include stopped/failed) |
 | `rm` | Remove sandbox containers by name/ID, or `--all` |
+| `logs` | Stream container logs (`-f` to follow) |
+| `sessions ps` | List sandbox session volumes |
+| `sessions rm` | Remove session volumes (`--all` for all) |
+| `config` | Print resolved config as YAML |
 
 ## Global flags
 
@@ -56,7 +73,6 @@ The command builds the image, starts the container, and prints the attach URL.
 |------|-------|-------------|
 | `--config` | `-c` | Config file path |
 | `--profile` | `-p` | Profile to use |
-| `--docker-host` | `-H` | Docker daemon to connect to |
 
 ## Run flags
 
@@ -65,40 +81,28 @@ The command builds the image, starts the container, and prints the attach URL.
 | `--env KEY=VALUE` | `-e` | Set or override an env var; repeatable |
 | `--mount source:target[:ro]` | `-v` | Append a mount; repeatable |
 | `--bind IP` | | Override `run.port.bind` |
-| `--name` | | Override the container name |
 | `--no-build` | | Skip the build step |
-| `--pull` | | Pass `--pull` to `docker build` |
 
 ## Config file
 
-Config files are always profiles-based. The tool looks for the config file in order:
+The tool looks for config in order:
 
 1. Path given by `-c`
 2. `./opencode-sandbox.yaml`
-3. `$XDG_CONFIG_HOME/opencode-sandbox/config.yaml` (default: `~/.config/opencode-sandbox/config.yaml`)
+3. `$XDG_CONFIG_HOME/opencode-sandbox/config.yaml`
 
 ```yaml
 docker:
-  host: tcp://build-box:2375   # global docker host; applies to all profiles
+  macos:
+    shared_paths_check: true   # validate Docker Desktop shared paths (macOS)
 
-default_profile: go-dev        # used when -p is omitted
+default_profile: go-dev
 
 profiles:
   go-dev:
-    docker:
-      host: tcp://other-box:2375   # overrides global docker.host for this profile
-      attach_host: build-box       # hostname used in the printed attach URL
-
     build:
       dockerfile: ./Dockerfile
       context: .
-      target: dev              # optional BuildKit target
-      args:
-        VERSION: latest
-      pull: false
-      secrets:
-        - id: api-key
-          env: ANTHROPIC_API_KEY   # or src: /path/to/file
 
     run:
       env:
@@ -110,27 +114,67 @@ profiles:
           target: /root/.gitconfig
           readonly: true
       workdir: /workspace
-      user: "1000"
       port:
         bind: 127.0.0.1
+
+    firewall:
+      network:
+        default: deny
+        cidr:
+          allow: [10.0.0.0/8]
+          deny: [10.0.0.0/24]
+        dns:
+          default: allow
+          allow: [anthropic.com, "*.anthropic.com"]
+          deny: [evil.anthropic.com]
+          upstream: [1.1.1.1, 8.8.8.8]
+        auto_pin_resolved: true
+
+    reverse_forward:
+      ports:
+        - host: 3000
+          container: 3000
 ```
 
-### Docker host precedence
+### Network rules
 
-`--docker-host` flag → profile `docker.host` → global `docker.host` → `DOCKER_HOST` env var → active Docker CLI context → SDK default
+Firewall rules use deny-wins semantics: if an address appears in both allow and deny lists, deny wins. Conflict detection logs warnings at config load.
 
-### Bind mount sources and remote hosts
+### Reverse forwarding
 
-When `docker.host` is a TCP or SSH endpoint, bind mount sources are passed to the daemon **as-is** — no local `~` or `$VAR` expansion is performed. Use absolute paths that exist on the remote machine:
+Forward host services into the sandbox:
 
 ```yaml
-run:
-  mounts:
-    - source: /Users/remote-user/workspace   # absolute path on the remote host
-      target: /workspace
+reverse_forward:
+  ports:
+    - host: 3000        # host port
+      container: 3000   # port inside firewall (agent reaches via firewall IP)
+  sockets:
+    - socket: /var/run/docker.sock
+      container: 2375
 ```
 
-For local daemons (Unix socket or no explicit host) paths are expanded locally: `~`, `$VAR`, and relative paths resolve against the config file's directory.
+### Credential forwarding (recipes)
+
+Use existing mount + env mechanisms — no special flags:
+
+```yaml
+# SSH agent forwarding
+run:
+  mounts:
+    - source: ${SSH_AUTH_SOCK}
+      target: /ssh-agent
+      readonly: true
+  env:
+    SSH_AUTH_SOCK: /ssh-agent
+
+# Git config
+run:
+  mounts:
+    - source: ~/.gitconfig
+      target: /root/.gitconfig
+      readonly: true
+```
 
 ### Profile selection
 
@@ -138,18 +182,14 @@ For local daemons (Unix socket or no explicit host) paths are expanded locally: 
 
 ### Session persistence
 
-Every sandbox automatically gets a Docker named volume (e.g. `go-dev-sessions`) mounted at `/root/.local/share/opencode` inside the container. This is where the official opencode binary stores its SQLite database and conversation history.
-
-- The volume is created automatically on the first run.
-- It is reused when you recreate the sandbox.
-- It is **not** deleted by `opencode-sandbox rm` — sessions survive container removal.
+Every sandbox automatically gets a Docker named volume mounted at opencode's default data path. Sessions survive container removal — use `sessions rm` to clean up.
 
 ## Examples
 
 Ready-to-use configs are in [`examples/`](examples/):
 
 - [`examples/basic/`](examples/basic/) — single profile with a project-local Dockerfile
-- [`examples/profiles/`](examples/profiles/) — multi-profile config for Go and Node.js dev environments, suitable for `~/.config/opencode-sandbox/config.yaml`
+- [`examples/profiles/`](examples/profiles/) — multi-profile config for Go and Node.js dev environments
 
 ## Requirements
 
