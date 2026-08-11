@@ -1,5 +1,12 @@
 package config
 
+const (
+	// PermissionModeOverride replaces host permissions entirely with sandbox rules.
+	PermissionModeOverride = "override"
+	// PermissionModeMerge layers sandbox rules on top of host permissions.
+	PermissionModeMerge = "merge"
+)
+
 // PermissionsConfig controls how the sandbox handles opencode permission rules.
 type PermissionsConfig struct {
 	// Mode determines how sandbox permissions interact with host permissions.

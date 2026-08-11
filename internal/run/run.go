@@ -43,9 +43,16 @@ type Result struct {
 
 // Start creates and starts a container named name running image.
 func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, name string) (*Result, error) {
-	envSlice := make([]string, 0, len(cfg.Run.Env))
+	envSlice := make([]string, 0, len(cfg.Run.Env)+1)
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
+	}
+
+	// Inject OPENCODE_CONFIG_CONTENT for permission override/merge.
+	if content, err := config.GenerateOpenCodeConfigContent(cfg.Permissions); err != nil {
+		return nil, fmt.Errorf("generate OPENCODE_CONFIG_CONTENT: %w", err)
+	} else if content != "" {
+		envSlice = append(envSlice, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 
 	// Bind mounts use HostConfig.Binds (the "source:target[:ro]" string form
@@ -71,6 +78,16 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 		Source: volumeName,
 		Target: opencodeContainerDataDir,
 	})
+
+	// Mount host opencode config directory read-only so the agent has access
+	// to auth.json, skills, and other host-side opencode configuration.
+	// Path: ~/.config/opencode → /root/.config/opencode (RO)
+	if home, err := os.UserHomeDir(); err == nil {
+		hostOpencodeConfig := home + "/.config/opencode"
+		if info, err := os.Stat(hostOpencodeConfig); err == nil && info.IsDir() {
+			binds = append(binds, hostOpencodeConfig+":/root/.config/opencode:ro")
+		}
+	}
 
 	bindIP := cfg.Run.Port.Bind
 	if bindIP == "" {
