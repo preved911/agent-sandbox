@@ -57,10 +57,10 @@ Each sandbox is a **stack of three Docker resources** managed as a unit:
 
 ```
 ┌─ Docker Volume ──────────────────────────────────────────────┐
-│  opencode-sandbox-<slug>-sessions                            │
+│  opencode-sandbox-<hash>-sessions                            │
 │  mounted at the opencode data directory inside the container │
 │  DURABLE: survives container recreation & `rm`               │
-│  CLEANED only via the `clean-sessions` subcommand            │
+│  CLEANED only via the `sessions rm` subcommand              │
 └──────────────────────────────────────────────────────────────┘
         ▲ mounted by
 ┌───────┴────────────────────┐      ┌──────────────────────────────┐
@@ -75,7 +75,7 @@ Each sandbox is a **stack of three Docker resources** managed as a unit:
 │    127.0.0.1:<random>       │─────►│   agent ──► firewall ──► net  │
 │                             │      │                               │
 │  network: opencode-sandbox- │      │  network: opencode-sandbox-   │
-│    <slug>-net (isolated,    │      │    <slug>-net (isolated)      │
+│    <hash>-net (isolated,    │      │    <hash>-net (isolated)     │
 │    NO direct internet)      │      │   + default bridge (internet) │
 └─────────────────────────────┘      └──────────────────────────────┘
         │ host publishes 127.0.0.1:<random> ──► container 0.0.0.0:4096
@@ -95,7 +95,7 @@ Each sandbox is a **stack of three Docker resources** managed as a unit:
 
 ### Network topology
 
-1. **Isolated bridge network** `opencode-sandbox-<slug>-net` — internal-only; no default gateway to the host bridge.
+1. **Isolated bridge network** `opencode-sandbox-<hash>-net` — internal-only; no default gateway to the host bridge.
 2. **Firewall container** joins **both** the isolated network **and** Docker's default bridge (which has internet). It enables IP forwarding + SNAT between the two. It runs:
    - **nftables** egress policy: default-deny; allow only configured CIDRs (plus DNS upstream).
    - **CoreDNS** on `<firewall-ip>:53`: allowlisted domains → forward to upstream; everything else → `NXDOMAIN`.
@@ -181,24 +181,33 @@ A sandbox is **bound to a directory**. The same absolute directory always maps t
 
 ### Path → name algorithm
 
-Docker enforces a **63-character limit** on container and volume names (DNS label spec). The prefix `opencode-sandbox-` alone consumes 18 characters, leaving only 45 for the path-derived part. Long filesystem paths (common on macOS: `/Users/bob/Documents/Developer/...`) would blow this budget immediately if converted naively.
-
-The naming scheme uses **basename + short hash** — readable, collision-safe, and guaranteed within limits:
+Docker enforces a **63-character limit** on container, volume, and network names (DNS label spec). The naming scheme uses **only a short hash** of the absolute path — no basename, no truncation logic, no edge cases:
 
 ```
 input:   host absolute cwd, e.g. /Users/bob/projects/myapp
 
-step 1:  basename = last path component → "myapp"
-         (fallback: "root" if cwd is "/")
-step 2:  hash      = SHA-256(abspath)[:8] → "a1b2c3d4"
-step 3:  name      = "opencode-sandbox-" + basename + "-" + hash
+step 1:  hash = SHA-256(abspath)[:8] → "a1b2c3d4"
+step 2:  base = "opencode-sandbox-" + hash
 
-output:  opencode-sandbox-myapp-a1b2c3d4   (36 chars — well within 63)
+output:  opencode-sandbox-a1b2c3d4   (26 chars — well within 63)
 ```
 
-**Budget enforcement:** `18 (prefix) + len(basename) + 1 (dash) + 8 (hash) = 27 + len(basename)`. If `basename` exceeds 36 chars, truncate from the left to fit (preserving the hash for uniqueness). Worst case: `opencode-sandbox-<36chars>-<8hash>` = exactly 63 chars.
+**Why hash only?** The basename added complexity (truncation when >36 chars, collision handling) for marginal benefit. The full path is already stored in **labels** for `ps` display — the name is just a machine handle. SHA-256[:8] gives 4 billion possibilities; collision-resistant for any realistic number of sandboxes.
 
-**Why basename, not full path?** The last directory component is what the user recognizes in `ps` output ("myapp", "client-portal-v2"). The full absolute path is stored in **labels** for lookup and display — the name is just a human handle. Two different paths with the same basename are differentiated by the hash.
+### Resource names (all share the same base)
+
+Every resource derives its name from the **same base** (`opencode-sandbox-<hash>`) plus a type suffix:
+
+| Resource | Name | Example |
+|---|---|---|
+| Agent container | `opencode-sandbox-<hash>-agent` | `opencode-sandbox-a1b2c3d4-agent` |
+| Firewall container | `opencode-sandbox-<hash>-firewall` | `opencode-sandbox-a1b2c3d4-firewall` |
+| Sessions volume | `opencode-sandbox-<hash>-sessions` | `opencode-sandbox-a1b2c3d4-sessions` |
+| Isolated network | `opencode-sandbox-<hash>-net` | `opencode-sandbox-a1b2c3d4-net` |
+
+**Length check:** base (26 chars) + longest suffix (`-firewall`/`-sessions` = 9) = 35 chars. Well within the 63-char limit.
+
+**Discovery benefit:** `docker ps -f name=opencode-sandbox-a1b2c3d4` returns all containers for that sandbox.
 
 - **Labels (the real identity):** every resource carries:
   - `opencode-sandbox=true` (existing invariant)
@@ -233,9 +242,9 @@ The **cwd is mounted at its own absolute path** inside the container — not at 
 
 opencode stores sessions under its default data directory. To keep sessions durable but **scoped per-sandbox-path** (different projects don't share sessions), the data dir is a **named volume** rather than a bind mount:
 
-- Volume name: `opencode-sandbox-<name>-sessions`
+- Volume name: `opencode-sandbox-<hash>-sessions` (shares the base name with all other resources; see §6)
 - Mounted at **opencode's default data path** inside the container — not configurable. The wrapper uses whatever path opencode uses by default (currently `/root/.local/share/opencode` for root in the container). Less configuration burden, no surprises.
-- Survives `rm`; cleaned only via `clean-sessions`
+- Survives `rm`; cleaned only via `sessions rm`
 
 ### Configurable mounts (from profile)
 
@@ -443,7 +452,9 @@ The firewall's isolated-network IP is deterministic (it's the gateway of the iso
 | `ps` | List sandboxes on this host (filter by `opencode-sandbox=true` label). |
 | `logs` | Stream logs from the agent and/or firewall container (`--firewall` to target the firewall). |
 | `rm` | Remove a sandbox's containers. Volume retained unless `--purge`. |
-| `clean-sessions` | Remove the sessions volume for a sandbox (or all, with `--all`). |
+| `sessions` | Parent command for session volume management. Subcommands: |
+| `sessions ps` | List session volumes (same verb as top-level `ps` for consistency). |
+| `sessions rm` | Remove the sessions volume for a sandbox (or all, with `--all`). |
 | `config` | Show the resolved config for the cwd's sandbox. |
 
 ### Global flags
@@ -642,7 +653,7 @@ The current codebase already provides: profiles-based config, `run`/`build`/`ps`
 - Firewall container + isolated network + nftables/CoreDNS enforcement (§4, §5, §12).
 - Path-bound sandbox naming + create-or-attach `run` semantics (§6).
 - Host config/auth/skills inheritance + `OPENCODE_CONFIG_CONTENT` overrides (§8).
-- New subcommands: `create`, `start`, `stop`, `attach`, `logs`, `clean-sessions`, `config` (§10).
+- New subcommands: `create`, `start`, `stop`, `attach`, `logs`, `sessions` (with `ps`/`rm` subcommands), `config` (§10).
 - Default profile for zero-config operation (§11).
 - Stack-level lifecycle management (firewall + agent as a unit).
 
@@ -652,6 +663,6 @@ The current codebase already provides: profiles-based config, `run`/`build`/`ps`
 
 **Keep:**
 - `build` section, `run.env`/`run.mounts`/`run.workdir`/`run.port.bind`.
-- Session volume behavior (made per-path via `<slug>-sessions`).
+- Session volume behavior (made per-path via `<hash>-sessions`).
 - Label invariant (extended with path + role labels).
 - Go + Cobra CLI structure, `internal/{config,cli,sandbox,paths}` package layout.
