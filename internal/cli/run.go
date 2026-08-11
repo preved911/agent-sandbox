@@ -11,6 +11,7 @@ import (
 	"github.com/preved911/opencode-sandbox/internal/config"
 	"github.com/preved911/opencode-sandbox/internal/docker"
 	"github.com/preved911/opencode-sandbox/internal/paths"
+	"github.com/preved911/opencode-sandbox/internal/preflight"
 	"github.com/preved911/opencode-sandbox/internal/sandbox"
 	"github.com/preved911/opencode-sandbox/internal/stack"
 )
@@ -81,6 +82,13 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			return fmt.Errorf("docker client: %w", err)
 		}
 		defer cli.Close()
+
+		// Pre-flight: verify cwd is in Docker's shared paths (macOS only).
+		if cfg.SharedPathsCheck {
+			if err := preflight.SharedPathsCheck(cwd); err != nil {
+				return err
+			}
+		}
 
 		s := stack.New(cli, hash, cfg)
 
