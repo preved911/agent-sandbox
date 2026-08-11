@@ -51,6 +51,11 @@ Each sandbox consists of 3 Docker resources:
 
 The agent container's DNS is pointed at the firewall, which enforces network rules (CIDR allow/deny, domain allow/deny) and forwards allowed traffic.
 
+## Documentation
+
+- **[USAGE.md](docs/USAGE.md)** — Detailed usage guide: build version pinning, config overrides, network rules, reverse forwarding, SSH/git credentials, recipes, CLI reference
+- **[DESIGN.md](docs/DESIGN.md)** — Architecture, threat model, design decisions
+
 ## Commands
 
 | Command | Description |
