@@ -6,7 +6,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/preved911/opencode-sandbox/internal/config"
+	"github.com/preved911/agent-sandbox/internal/config"
 )
 
 // GenerateNftablesConfig generates an nftables configuration from network rules.

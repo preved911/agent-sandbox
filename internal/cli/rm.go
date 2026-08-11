@@ -9,8 +9,8 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/spf13/cobra"
 
-	"github.com/preved911/opencode-sandbox/internal/docker"
-	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/agent-sandbox/internal/docker"
+	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
 func newRmCmd(rf *rootFlags) *cobra.Command {
@@ -80,7 +80,7 @@ func removeOne(ctx context.Context, cli *client.Client, target string, force boo
 		return fmt.Errorf("inspect %s: %w", target, err)
 	}
 	if inspect.Config == nil || inspect.Config.Labels[sandbox.Label] != "true" {
-		return fmt.Errorf("%s is not an opencode-sandbox container; refusing to remove", target)
+		return fmt.Errorf("%s is not an agent-sandbox container; refusing to remove", target)
 	}
 	return cli.ContainerRemove(ctx, inspect.ID, container.RemoveOptions{Force: force})
 }

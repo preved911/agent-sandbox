@@ -14,8 +14,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/preved911/opencode-sandbox/internal/config"
-	"github.com/preved911/opencode-sandbox/internal/paths"
+	"github.com/preved911/agent-sandbox/internal/config"
+	"github.com/preved911/agent-sandbox/internal/paths"
 )
 
 // Options tweaks a single build invocation.
@@ -35,7 +35,7 @@ func ImageBuild(ctx context.Context, cfg *config.Config, opts Options) (string, 
 
 	tag := opts.Tag
 	if tag == "" {
-		tag = "opencode-sandbox/" + cfg.Name + ":latest"
+		tag = "agent-sandbox/" + cfg.Name + ":latest"
 	}
 
 	dockerfile := cfg.Build.Dockerfile

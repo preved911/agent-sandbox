@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/preved911/opencode-sandbox/internal/config"
+	"github.com/preved911/agent-sandbox/internal/config"
 )
 
 func TestGenerateNftablesConfig_DenyBeforeAllow(t *testing.T) {

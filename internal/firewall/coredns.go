@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/preved911/opencode-sandbox/internal/config"
+	"github.com/preved911/agent-sandbox/internal/config"
 )
 
 // GenerateCoreDNSConfig generates a CoreDNS Corefile from DNS rules.

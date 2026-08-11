@@ -16,9 +16,9 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 
-	"github.com/preved911/opencode-sandbox/internal/config"
-	"github.com/preved911/opencode-sandbox/internal/paths"
-	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/agent-sandbox/internal/config"
+	"github.com/preved911/agent-sandbox/internal/paths"
+	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
 // Result describes a successfully started sandbox.

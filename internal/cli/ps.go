@@ -11,15 +11,15 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/spf13/cobra"
 
-	"github.com/preved911/opencode-sandbox/internal/docker"
-	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/agent-sandbox/internal/docker"
+	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
 func newPsCmd(rf *rootFlags) *cobra.Command {
 	var all, quiet bool
 	cmd := &cobra.Command{
 		Use:   "ps",
-		Short: "List sandbox containers (filtered by opencode-sandbox label)",
+		Short: "List sandbox containers (filtered by agent-sandbox label)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cli, err := docker.NewClient("")

@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/preved911/opencode-sandbox/internal/config"
+	"github.com/preved911/agent-sandbox/internal/config"
 )
 
 func newConfigCmd(rf *rootFlags) *cobra.Command {

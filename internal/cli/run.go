@@ -8,13 +8,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/preved911/opencode-sandbox/internal/build"
-	"github.com/preved911/opencode-sandbox/internal/config"
-	"github.com/preved911/opencode-sandbox/internal/docker"
-	"github.com/preved911/opencode-sandbox/internal/paths"
-	"github.com/preved911/opencode-sandbox/internal/preflight"
-	"github.com/preved911/opencode-sandbox/internal/sandbox"
-	"github.com/preved911/opencode-sandbox/internal/stack"
+	"github.com/preved911/agent-sandbox/internal/build"
+	"github.com/preved911/agent-sandbox/internal/config"
+	"github.com/preved911/agent-sandbox/internal/docker"
+	"github.com/preved911/agent-sandbox/internal/paths"
+	"github.com/preved911/agent-sandbox/internal/preflight"
+	"github.com/preved911/agent-sandbox/internal/sandbox"
+	"github.com/preved911/agent-sandbox/internal/stack"
 )
 
 func newRunCmd(rf *rootFlags) *cobra.Command {

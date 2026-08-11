@@ -14,9 +14,9 @@
 //	    firewall: ...
 //	    permissions: ...
 //
-// Load resolves an explicit path, then ./opencode-sandbox.yaml, then the
-// central default at $HOME/.config/opencode-sandbox/config.yaml
-// ($XDG_CONFIG_HOME/opencode-sandbox/config.yaml when XDG_CONFIG_HOME is set).
+// Load resolves an explicit path, then ./agent-sandbox.yaml, then the
+// central default at $HOME/.config/agent-sandbox/config.yaml
+// ($XDG_CONFIG_HOME/agent-sandbox/config.yaml when XDG_CONFIG_HOME is set).
 package config
 
 import (
@@ -26,7 +26,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/preved911/opencode-sandbox/internal/paths"
+	"github.com/preved911/agent-sandbox/internal/paths"
 )
 
 // Config is a single sandbox/profile configuration.
@@ -105,8 +105,8 @@ type file struct {
 //
 // Resolution order for the config file:
 //  1. explicitPath (-c flag)
-//  2. ./opencode-sandbox.yaml
-//  3. $HOME/.config/opencode-sandbox/config.yaml
+//  2. ./agent-sandbox.yaml
+//  3. $HOME/.config/agent-sandbox/config.yaml
 //
 // Profile selection within that file:
 //  1. profile (-p/--profile flag)
@@ -116,7 +116,7 @@ func Load(explicitPath, profile string) (*Config, error) {
 	if explicitPath != "" {
 		return loadFile(explicitPath, profile)
 	}
-	const localName = "opencode-sandbox.yaml"
+	const localName = "agent-sandbox.yaml"
 	if _, err := os.Stat(localName); err == nil {
 		return loadFile(localName, profile)
 	}
@@ -136,7 +136,7 @@ func centralConfigPath() (string, error) {
 		}
 		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(base, "opencode-sandbox", "config.yaml"), nil
+	return filepath.Join(base, "agent-sandbox", "config.yaml"), nil
 }
 
 func loadFile(path, profile string) (*Config, error) {

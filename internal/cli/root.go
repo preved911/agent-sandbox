@@ -20,13 +20,13 @@ type rootFlags struct {
 func newRootCmd() *cobra.Command {
 	rf := &rootFlags{}
 	cmd := &cobra.Command{
-		Use:           "opencode-sandbox",
+		Use:           "agent-sandbox",
 		Short:         "Manage isolated agent containers",
 		Long:          "Builds and runs containers that expose an agent endpoint on a random host port, so you can attach a local client to a sandboxed run.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	cmd.PersistentFlags().StringVarP(&rf.configPath, "config", "c", "", "config file path (default: ./opencode-sandbox.yaml → $HOME/.config/opencode-sandbox/config.yaml)")
+	cmd.PersistentFlags().StringVarP(&rf.configPath, "config", "c", "", "config file path (default: ./agent-sandbox.yaml → $HOME/.config/agent-sandbox/config.yaml)")
 	cmd.PersistentFlags().StringVarP(&rf.profile, "profile", "p", "", "profile name (overrides default_profile in config)")
 
 	cmd.AddCommand(

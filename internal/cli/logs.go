@@ -8,8 +8,8 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/spf13/cobra"
 
-	"github.com/preved911/opencode-sandbox/internal/docker"
-	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/agent-sandbox/internal/docker"
+	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
 func newLogsCmd(rf *rootFlags) *cobra.Command {
@@ -47,7 +47,7 @@ func newLogsCmd(rf *rootFlags) *cobra.Command {
 				return fmt.Errorf("sandbox not found: %s", name)
 			}
 			if inspect.Config == nil || inspect.Config.Labels[sandbox.Label] != "true" {
-				return fmt.Errorf("%s is not an opencode-sandbox container", name)
+				return fmt.Errorf("%s is not an agent-sandbox container", name)
 			}
 
 			opts := container.LogsOptions{

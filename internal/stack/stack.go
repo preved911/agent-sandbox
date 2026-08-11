@@ -11,11 +11,11 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 
-	"github.com/preved911/opencode-sandbox/internal/config"
-	"github.com/preved911/opencode-sandbox/internal/firewall"
-	sandboxnet "github.com/preved911/opencode-sandbox/internal/network"
-	"github.com/preved911/opencode-sandbox/internal/run"
-	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/agent-sandbox/internal/config"
+	"github.com/preved911/agent-sandbox/internal/firewall"
+	sandboxnet "github.com/preved911/agent-sandbox/internal/network"
+	"github.com/preved911/agent-sandbox/internal/run"
+	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
 // Stack manages the 3-resource sandbox stack:
@@ -248,7 +248,7 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 	labels[sandbox.SandboxRole] = "firewall"
 
 	cConf := &container.Config{
-		Image:  "opencode-sandbox-firewall:latest",
+		Image:  "agent-sandbox-firewall:latest",
 		Labels: labels,
 		Env:    envSlice,
 	}

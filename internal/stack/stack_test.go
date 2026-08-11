@@ -3,8 +3,8 @@ package stack
 import (
 	"testing"
 
-	"github.com/preved911/opencode-sandbox/internal/config"
-	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/agent-sandbox/internal/config"
+	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
 func TestStackResourceNames(t *testing.T) {
@@ -14,10 +14,10 @@ func TestStackResourceNames(t *testing.T) {
 		suffix string
 		want   string
 	}{
-		{sandbox.SuffixAgent, "opencode-sandbox-" + hash + "-agent"},
-		{sandbox.SuffixFirewall, "opencode-sandbox-" + hash + "-firewall"},
-		{sandbox.SuffixSessions, "opencode-sandbox-" + hash + "-sessions"},
-		{sandbox.SuffixNet, "opencode-sandbox-" + hash + "-net"},
+		{sandbox.SuffixAgent, "agent-sandbox-" + hash + "-agent"},
+		{sandbox.SuffixFirewall, "agent-sandbox-" + hash + "-firewall"},
+		{sandbox.SuffixSessions, "agent-sandbox-" + hash + "-sessions"},
+		{sandbox.SuffixNet, "agent-sandbox-" + hash + "-net"},
 	}
 
 	for _, tt := range tests {

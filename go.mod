@@ -1,4 +1,4 @@
-module github.com/preved911/opencode-sandbox
+module github.com/preved911/agent-sandbox
 
 go 1.25.0
 

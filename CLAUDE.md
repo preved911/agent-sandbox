@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when writing code in
 
 ```bash
 # Build the binary
-go build ./cmd/opencode-sandbox/
+go build ./cmd/agent-sandbox/
 
 # Build and verify all packages compile
 go build ./...
@@ -18,7 +18,7 @@ go test ./internal/config/...
 go test ./...
 ```
 
-There is no Makefile. The binary entry point is `cmd/opencode-sandbox/main.go`.
+There is no Makefile. The binary entry point is `cmd/agent-sandbox/main.go`.
 
 ## Architecture
 
@@ -26,16 +26,16 @@ The tool creates isolated Docker sandboxes for opencode agents. Each sandbox has
 
 ### Package layout
 
-- `cmd/opencode-sandbox/main.go` — Entry point, signal handling
+- `cmd/agent-sandbox/main.go` — Entry point, signal handling
 - `internal/cli/` — Cobra commands: root, run, build, create, start, stop, logs, ps, rm, sessions (ps/rm), config
 - `internal/config/` — Config loading, types, validation
-  - `config.go` — Profile-based config loader (explicit path → ./opencode-sandbox.yaml → $XDG_CONFIG_HOME)
+  - `config.go` — Profile-based config loader (explicit path → ./agent-sandbox.yaml → $XDG_CONFIG_HOME)
   - `firewall.go` — NetworkConfig, CIDRRules, DNSRules types
   - `forward.go` — ReverseForwardConfig (ports + sockets)
   - `validation.go` — CIDR parsing, conflict detection, port validation
 - `internal/sandbox/` — Naming (hash-based), labels, constants
   - `HashPath(absPath) → 8 hex chars` — deterministic sandbox identity
-  - `ResourceName(hash, suffix) → opencode-sandbox-<hash>-<suffix>`
+  - `ResourceName(hash, suffix) → agent-sandbox-<hash>-<suffix>`
 - `internal/docker/` — Docker SDK client wrapper (`NewClient`)
 - `internal/run/` — Agent container creation + start on isolated network
 - `internal/build/` — Docker image build (shells out to `docker build`)
@@ -50,7 +50,7 @@ The tool creates isolated Docker sandboxes for opencode agents. Each sandbox has
 
 ### Key design decisions
 
-- **Naming:** hash-only (`opencode-sandbox-<hash>-<suffix>`), SHA-256[:8] of absolute cwd path
+- **Naming:** hash-only (`agent-sandbox-<hash>-<suffix>`), SHA-256[:8] of absolute cwd path
 - **3 resources per sandbox:** agent container + firewall container + sessions volume
 - **Network isolation:** agent DNS → firewall; nftables enforces CIDR/DNS rules; deny wins
 - **Reverse forwarding:** socat in firewall, implicit nftables OUTPUT rules auto-generated

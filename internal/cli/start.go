@@ -6,8 +6,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/spf13/cobra"
 
-	"github.com/preved911/opencode-sandbox/internal/docker"
-	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/agent-sandbox/internal/docker"
+	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
 func newStartCmd(rf *rootFlags) *cobra.Command {
@@ -32,7 +32,7 @@ func newStartCmd(rf *rootFlags) *cobra.Command {
 					continue
 				}
 				if inspect.Config == nil || inspect.Config.Labels[sandbox.Label] != "true" {
-					fmt.Fprintf(cmd.ErrOrStderr(), "error: %s is not an opencode-sandbox container\n", target)
+					fmt.Fprintf(cmd.ErrOrStderr(), "error: %s is not an agent-sandbox container\n", target)
 					continue
 				}
 				if inspect.State.Running {

@@ -1,4 +1,4 @@
-# opencode-sandbox
+# agent-sandbox
 
 Docker-based sandbox for [opencode](https://opencode.ai) agents. Each sandbox runs in an isolated container with its own network firewall, so agents can't reach the host or external services unless you explicitly allow it.
 
@@ -9,12 +9,12 @@ opencode attach http://127.0.0.1:49312
 ## Installation
 
 ```bash
-go install github.com/preved911/opencode-sandbox/cmd/opencode-sandbox@latest
+go install github.com/preved911/agent-sandbox/cmd/agent-sandbox@latest
 ```
 
 ## Quick start
 
-Create `opencode-sandbox.yaml` in your project:
+Create `agent-sandbox.yaml` in your project:
 
 ```yaml
 profiles:
@@ -34,7 +34,7 @@ profiles:
 Then run:
 
 ```bash
-opencode-sandbox run -e ANTHROPIC_API_KEY=sk-ant-...
+agent-sandbox run -e ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 The command builds the image, creates the sandbox (agent container + firewall + network), and prints the attach URL.
@@ -88,8 +88,8 @@ The agent container's DNS is pointed at the firewall, which enforces network rul
 The tool looks for config in order:
 
 1. Path given by `-c`
-2. `./opencode-sandbox.yaml`
-3. `$XDG_CONFIG_HOME/opencode-sandbox/config.yaml`
+2. `./agent-sandbox.yaml`
+3. `$XDG_CONFIG_HOME/agent-sandbox/config.yaml`
 
 ```yaml
 docker:

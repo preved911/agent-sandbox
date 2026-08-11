@@ -1,10 +1,10 @@
-# Basic profile example. Place at ./opencode-sandbox.yaml in your project.
+# Basic profile example. Place at ./agent-sandbox.yaml in your project.
 #
 # Usage:
-#   opencode-sandbox run -e ANTHROPIC_API_KEY=sk-ant-...
+#   agent-sandbox run -e ANTHROPIC_API_KEY=sk-ant-...
 #
 # Override per-invocation:
-#   opencode-sandbox run -v ~/otherproject:/workspace --bind 0.0.0.0
+#   agent-sandbox run -v ~/otherproject:/workspace --bind 0.0.0.0
 
 docker:
   macos:
@@ -31,7 +31,7 @@ profiles:
       env:
         OPENCODE_TELEMETRY: "0"
         # Pass secrets at runtime with -e rather than storing them in config:
-        #   opencode-sandbox run -e ANTHROPIC_API_KEY=sk-ant-...
+        #   agent-sandbox run -e ANTHROPIC_API_KEY=sk-ant-...
 
       mounts:
         # Bind the project directory you want opencode to work in.
@@ -58,7 +58,7 @@ profiles:
       port:
         container: 4096/tcp
         # Override at runtime to expose to the LAN:
-        #   opencode-sandbox run --bind 0.0.0.0
+        #   agent-sandbox run --bind 0.0.0.0
         bind: 127.0.0.1
 
     firewall:

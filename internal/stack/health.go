@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/preved911/opencode-sandbox/internal/firewall"
+	"github.com/preved911/agent-sandbox/internal/firewall"
 )
 
 // WaitForHealthy waits for the firewall container to become healthy.

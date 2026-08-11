@@ -1,18 +1,18 @@
-# Profiles config. Install at ~/.config/opencode-sandbox/config.yaml so that
-# `opencode-sandbox -p go-dev run` and `opencode-sandbox -p node-dev run` work
-# from any directory without a project-local opencode-sandbox.yaml.
+# Profiles config. Install at ~/.config/agent-sandbox/config.yaml so that
+# `agent-sandbox -p go-dev run` and `agent-sandbox -p node-dev run` work
+# from any directory without a project-local agent-sandbox.yaml.
 #
 # Paths resolve relative to this file, so Dockerfile-go and Dockerfile-node are
 # expected to live alongside it.
 #
 # Usage from any project directory:
-#   opencode-sandbox -p go-dev run -e ANTHROPIC_API_KEY=sk-ant-...
+#   agent-sandbox -p go-dev run -e ANTHROPIC_API_KEY=sk-ant-...
 #
 # Override the bound project directory per-invocation:
-#   opencode-sandbox -p go-dev run -e ANTHROPIC_API_KEY=sk-ant-... -v $PWD:/workspace
+#   agent-sandbox -p go-dev run -e ANTHROPIC_API_KEY=sk-ant-... -v $PWD:/workspace
 #
 # Expose to the LAN instead of loopback:
-#   opencode-sandbox -p go-dev run --bind 0.0.0.0 -e ANTHROPIC_API_KEY=sk-ant-...
+#   agent-sandbox -p go-dev run --bind 0.0.0.0 -e ANTHROPIC_API_KEY=sk-ant-...
 
 docker:
   macos:

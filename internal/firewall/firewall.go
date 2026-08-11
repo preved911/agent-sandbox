@@ -7,8 +7,8 @@ import (
 
 	"github.com/docker/docker/client"
 
-	"github.com/preved911/opencode-sandbox/internal/config"
-	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/agent-sandbox/internal/config"
+	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
 // FirewallContainer manages the firewall container for a sandbox.

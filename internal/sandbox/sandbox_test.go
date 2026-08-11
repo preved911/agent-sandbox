@@ -47,8 +47,8 @@ func TestHashPath_CleansPath(t *testing.T) {
 
 func TestResourceName(t *testing.T) {
 	name := ResourceName("a1b2c3d4", SuffixAgent)
-	if name != "opencode-sandbox-a1b2c3d4-agent" {
-		t.Errorf("ResourceName = %s, want opencode-sandbox-a1b2c3d4-agent", name)
+	if name != "agent-sandbox-a1b2c3d4-agent" {
+		t.Errorf("ResourceName = %s, want agent-sandbox-a1b2c3d4-agent", name)
 	}
 }
 

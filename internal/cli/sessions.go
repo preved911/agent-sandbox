@@ -9,8 +9,8 @@ import (
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/spf13/cobra"
 
-	"github.com/preved911/opencode-sandbox/internal/docker"
-	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/agent-sandbox/internal/docker"
+	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
 func newSessionsCmd(rf *rootFlags) *cobra.Command {

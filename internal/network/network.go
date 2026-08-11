@@ -9,14 +9,14 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
-	"github.com/preved911/opencode-sandbox/internal/sandbox"
+	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
 // Create creates an isolated Docker bridge network for the sandbox.
 // The network has no default gateway to the host bridge — the firewall
 // container provides the only path to external networks.
 //
-// Network name: opencode-sandbox-<hash>-net
+// Network name: agent-sandbox-<hash>-net
 //
 // Returns the network ID and the gateway IP (firewall's expected IP).
 func Create(ctx context.Context, cli *client.Client, hash string) (networkID string, err error) {

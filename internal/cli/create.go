@@ -6,11 +6,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/preved911/opencode-sandbox/internal/build"
-	"github.com/preved911/opencode-sandbox/internal/config"
-	"github.com/preved911/opencode-sandbox/internal/docker"
-	"github.com/preved911/opencode-sandbox/internal/sandbox"
-	"github.com/preved911/opencode-sandbox/internal/stack"
+	"github.com/preved911/agent-sandbox/internal/build"
+	"github.com/preved911/agent-sandbox/internal/config"
+	"github.com/preved911/agent-sandbox/internal/docker"
+	"github.com/preved911/agent-sandbox/internal/sandbox"
+	"github.com/preved911/agent-sandbox/internal/stack"
 )
 
 func newCreateCmd(rf *rootFlags) *cobra.Command {
@@ -65,7 +65,7 @@ func newCreateCmd(rf *rootFlags) *cobra.Command {
 			case cfg.Build.Image != "":
 				image = cfg.Build.Image
 			case noBuild:
-				image = "opencode-sandbox/" + cfg.Name + ":latest"
+				image = "agent-sandbox/" + cfg.Name + ":latest"
 			default:
 				image, err = build.ImageBuild(ctx, cfg, build.Options{Pull: pull})
 				if err != nil {

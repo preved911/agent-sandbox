@@ -10,31 +10,31 @@ import (
 // Label is attached to every container the tool creates. ps and rm refuse to
 // touch any container that does not carry this label, so the tool can never
 // list or remove an unrelated container.
-const Label = "opencode-sandbox"
+const Label = "agent-sandbox"
 
-// LabelName carries the full resource name (e.g. "opencode-sandbox-a1b2c3d4-agent")
+// LabelName carries the full resource name (e.g. "agent-sandbox-a1b2c3d4-agent")
 // for display in ps output and debugging.
-const LabelName = "opencode-sandbox.name"
+const LabelName = "agent-sandbox.name"
 
 // LabelHash carries the 8-character hex hash derived from the working directory.
-const LabelHash = "opencode-sandbox.hash"
+const LabelHash = "agent-sandbox.hash"
 
 // LabelPath carries the absolute working directory path for display and cleanup.
-const LabelPath = "opencode-sandbox.path"
+const LabelPath = "agent-sandbox.path"
 
 // LabelProfile carries the config profile name for debugging.
-const LabelProfile = "opencode-sandbox.profile"
+const LabelProfile = "agent-sandbox.profile"
 
 // SandboxRole identifies the role of a sandbox container ("agent" or "firewall").
-const SandboxRole = "opencode-sandbox.role"
+const SandboxRole = "agent-sandbox.role"
 
 // Resource suffixes. All sandbox resources share the same hash base plus a
 // type suffix:
 //
-//	Agent container:  opencode-sandbox-<hash>-agent
-//	Firewall container: opencode-sandbox-<hash>-firewall
-//	Sessions volume:  opencode-sandbox-<hash>-sessions
-//	Isolated network: opencode-sandbox-<hash>-net
+//	Agent container:  agent-sandbox-<hash>-agent
+//	Firewall container: agent-sandbox-<hash>-firewall
+//	Sessions volume:  agent-sandbox-<hash>-sessions
+//	Isolated network: agent-sandbox-<hash>-net
 const (
 	SuffixAgent    = "-agent"
 	SuffixFirewall = "-firewall"
@@ -53,7 +53,7 @@ func HashPath(absPath string) string {
 }
 
 // ResourceName returns a Docker resource name for the given hash and suffix.
-// Example: ResourceName("a1b2c3d4", SuffixAgent) → "opencode-sandbox-a1b2c3d4-agent"
+// Example: ResourceName("a1b2c3d4", SuffixAgent) → "agent-sandbox-a1b2c3d4-agent"
 func ResourceName(hash, suffix string) string {
 	return Label + "-" + hash + suffix
 }
