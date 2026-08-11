@@ -32,12 +32,16 @@ type Result struct {
 
 // Create creates a container named name running image without starting it.
 // The container is created on the specified network (if any) and can be started later.
-func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, hash string) error {
+// gateway is the Docker bridge gateway IP for host-side proxy goroutines.
+func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, hash, gateway string) error {
 	containerPort := nat.Port(cfg.Run.Port.Container)
 
-	envSlice := make([]string, 0, len(cfg.Run.Env))
+	envSlice := make([]string, 0, len(cfg.Run.Env)+1)
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
+	}
+	if gateway != "" {
+		envSlice = append(envSlice, "SANDBOX_GATEWAY="+gateway)
 	}
 
 	binds, otherMounts, err := buildMounts(cfg)
@@ -81,7 +85,7 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 		},
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 		// DNS points to the firewall container so all DNS queries are filtered by CoreDNS.
-		DNS: []string{"172.20.0.1"},
+		DNS: []string{"172.20.0.2"},
 	}
 
 	// Network config — join isolated network if specified
@@ -100,12 +104,16 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 }
 
 // Start creates and starts a container named name running image.
-func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, name string) (*Result, error) {
+// gateway is the Docker bridge gateway IP for host-side proxy goroutines.
+func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, name, gateway string) (*Result, error) {
 	containerPort := nat.Port(cfg.Run.Port.Container)
 
-	envSlice := make([]string, 0, len(cfg.Run.Env))
+	envSlice := make([]string, 0, len(cfg.Run.Env)+1)
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
+	}
+	if gateway != "" {
+		envSlice = append(envSlice, "SANDBOX_GATEWAY="+gateway)
 	}
 
 	// Bind mounts use HostConfig.Binds (the "source:target[:ro]" string form
@@ -154,7 +162,7 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 		},
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 		// DNS points to the firewall container so all DNS queries are filtered by CoreDNS.
-		DNS: []string{"172.20.0.1"},
+		DNS: []string{"172.20.0.2"},
 	}
 
 	created, err := cli.ContainerCreate(ctx, cConf, hConf, nil, nil, name)

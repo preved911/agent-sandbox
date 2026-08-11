@@ -75,3 +75,20 @@ func Exists(ctx context.Context, cli *client.Client, hash string) (bool, error) 
 	}
 	return false, nil
 }
+
+// GatewayIP returns the bridge gateway IP for the sandbox network.
+// This is the host-side interface that containers use as their default route.
+// The host-side proxy goroutines listen on this IP so containers can reach them.
+func GatewayIP(ctx context.Context, cli *client.Client, hash string) (string, error) {
+	name := sandbox.ResourceName(hash, sandbox.SuffixNet)
+	resp, err := cli.NetworkInspect(ctx, name, network.InspectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("inspect network %s: %w", name, err)
+	}
+	for _, cfg := range resp.IPAM.Config {
+		if cfg.Gateway != "" {
+			return cfg.Gateway, nil
+		}
+	}
+	return "", fmt.Errorf("network %s: no gateway IP found", name)
+}

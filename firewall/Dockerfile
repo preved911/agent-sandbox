@@ -3,7 +3,6 @@ FROM alpine:3.20
 RUN apk add --no-cache \
     nftables \
     coredns \
-    socat \
     iptables \
     bash \
     && rm -rf /var/cache/apk/*

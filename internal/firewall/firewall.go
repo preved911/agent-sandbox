@@ -51,7 +51,7 @@ func (f *FirewallContainer) ValidateConfig(networkCfg *config.NetworkConfig) {
 }
 
 // FirewallEnv returns environment variables for the firewall container.
-func (f *FirewallContainer) FirewallEnv(networkCfg *config.NetworkConfig, reverseForward *config.ReverseForwardConfig) []string {
+func (f *FirewallContainer) FirewallEnv(networkCfg *config.NetworkConfig) []string {
 	var env []string
 
 	if networkCfg != nil {
@@ -75,15 +75,6 @@ func (f *FirewallContainer) FirewallEnv(networkCfg *config.NetworkConfig, revers
 		if len(networkCfg.DNS.Upstream) > 0 {
 			env = append(env, fmt.Sprintf("DNS_UPSTREAM=%s", joinStrings(networkCfg.DNS.Upstream)))
 		}
-	}
-
-	// Reverse forwarding
-	if reverseForward != nil && len(reverseForward.Ports) > 0 {
-		var portPairs []string
-		for _, p := range reverseForward.Ports {
-			portPairs = append(portPairs, fmt.Sprintf("%d:%d", p.Host, p.Container))
-		}
-		env = append(env, fmt.Sprintf("REVERSE_FORWARD_PORTS=%s", joinStrings(portPairs)))
 	}
 
 	return env

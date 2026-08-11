@@ -45,15 +45,15 @@ The tool creates isolated Docker sandboxes for opencode agents. Each sandbox has
 - `firewall/` — Firewall Docker image (Dockerfile, entrypoint.sh, Go generators)
   - `nftables.go` — deny-before-allow nftables rule generation
   - `coredns.go` — CoreDNS config generation
-  - `forward.go` — socat reverse forwarders + implicit OUTPUT rules
   - `firewall.go` — FirewallEnv() generates container env vars from config
+- `internal/proxy/` — Host-side reverse forwarding (TCP/Unix socket proxy goroutines)
 
 ### Key design decisions
 
 - **Naming:** hash-only (`agent-sandbox-<hash>-<suffix>`), SHA-256[:8] of absolute cwd path
 - **3 resources per sandbox:** agent container + firewall container + sessions volume
 - **Network isolation:** agent DNS → firewall; nftables enforces CIDR/DNS rules; deny wins
-- **Reverse forwarding:** socat in firewall, implicit nftables OUTPUT rules auto-generated
+- **Reverse forwarding:** host-side proxy goroutines, agent connects to SANDBOX_GATEWAY
 - **Config loading:** profiles-based, deep-merge (project overrides global)
 
 ### Config schema (YAML)

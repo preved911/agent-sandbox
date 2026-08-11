@@ -54,15 +54,22 @@ func (s *Stack) Create(ctx context.Context, image string) error {
 		return fmt.Errorf("create network: %w", err)
 	}
 
-	// 3. Create firewall container
+	// 3. Get gateway IP (reserved for host-side proxy goroutines)
+	gateway, err := sandboxnet.GatewayIP(ctx, s.cli, s.hash)
+	if err != nil {
+		return fmt.Errorf("get gateway IP: %w", err)
+	}
+	log.Printf("Gateway IP: %s (reserved for host-side proxy)", gateway)
+
+	// 4. Create firewall container
 	log.Printf("Creating firewall container...")
 	if err := s.createFirewall(ctx); err != nil {
 		return fmt.Errorf("create firewall: %w", err)
 	}
 
-	// 4. Create agent container
+	// 5. Create agent container
 	log.Printf("Creating agent container...")
-	if err := run.Create(ctx, s.cli, s.config, image, s.hash); err != nil {
+	if err := run.Create(ctx, s.cli, s.config, image, s.hash, gateway); err != nil {
 		return fmt.Errorf("create agent: %w", err)
 	}
 
@@ -233,16 +240,19 @@ type StackStatus struct {
 	Network  string
 }
 
+// GetGatewayIP returns the Docker bridge gateway IP for this stack.
+// The gateway IP (172.20.0.1) is used by host-side proxy goroutines.
+func (s *Stack) GetGatewayIP(ctx context.Context) (string, error) {
+	return sandboxnet.GatewayIP(ctx, s.cli, s.hash)
+}
+
 func (s *Stack) createFirewall(ctx context.Context) error {
 	fwName := sandbox.ResourceName(s.hash, sandbox.SuffixFirewall)
 	networkName := sandbox.ResourceName(s.hash, sandbox.SuffixNet)
 
 	// Build firewall env vars from config
 	fw := firewall.NewFirewallContainer(s.cli, s.hash)
-	envSlice := fw.FirewallEnv(
-		&config.NetworkConfig{},
-		nil, // reverse_forward will be injected later when we have the full config
-	)
+	envSlice := fw.FirewallEnv(&s.config.Firewall.Network)
 
 	labels := sandbox.DefaultLabels(s.hash, "", "")
 	labels[sandbox.SandboxRole] = "firewall"
@@ -253,12 +263,13 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 		Env:    envSlice,
 	}
 
-	// Firewall uses the isolated network with a fixed IP (gateway of the subnet).
+	// Firewall uses the isolated network with a fixed IP (not the gateway).
+	// The gateway IP (172.20.0.1) is reserved for host-side proxy goroutines.
 	nConf := &dockernet.NetworkingConfig{
 		EndpointsConfig: map[string]*dockernet.EndpointSettings{
 			networkName: {
 				IPAMConfig: &dockernet.EndpointIPAMConfig{
-					IPv4Address: "172.20.0.1",
+					IPv4Address: "172.20.0.2",
 				},
 			},
 		},
