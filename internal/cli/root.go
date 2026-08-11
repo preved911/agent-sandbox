@@ -32,6 +32,13 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(
 		newRunCmd(rf),
 		newBuildCmd(rf),
+		newCreateCmd(rf),
+		newStartCmd(rf),
+		newStopCmd(rf),
+		newAttachCmd(rf),
+		newLogsCmd(rf),
+		newSessionsCmd(rf),
+		newConfigCmd(rf),
 		newPsCmd(rf),
 		newRmCmd(rf),
 	)
