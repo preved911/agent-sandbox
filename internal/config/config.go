@@ -68,8 +68,16 @@ type RunConfig struct {
 	Command        []string             `yaml:"command,omitempty"`
 	DataDir        string               `yaml:"data_dir,omitempty"`
 	Attach         []string             `yaml:"attach,omitempty"`
+	Cache          []CacheConfig        `yaml:"cache,omitempty"`
 	ReverseForward ReverseForwardConfig `yaml:"reverse_forward,omitempty"`
 	Firewall       FirewallConfig       `yaml:"firewall,omitempty"`
+}
+
+// CacheConfig defines a persistent named Docker volume mounted at Path.
+// Cache volumes survive container restarts and rm — use `caches rm` to delete.
+type CacheConfig struct {
+	Name string `yaml:"name"`
+	Path string `yaml:"path"`
 }
 
 type Mount struct {

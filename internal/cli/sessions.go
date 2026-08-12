@@ -45,12 +45,16 @@ func newSessionsPsCmd(rf *rootFlags) *cobra.Command {
 				return fmt.Errorf("list volumes: %w", err)
 			}
 
-			// Filter to sandbox volumes.
+			// Filter to sandbox session volumes (exclude cache volumes).
 			var sandboxVolumes []volume.Volume
 			for _, v := range volumes.Volumes {
-				if v.Labels[sandbox.Label] == "true" {
-					sandboxVolumes = append(sandboxVolumes, *v)
+				if v.Labels[sandbox.Label] != "true" {
+					continue
 				}
+				if isCacheVolume(v.Name) {
+					continue
+				}
+				sandboxVolumes = append(sandboxVolumes, *v)
 			}
 
 			out := cmd.OutOrStdout()
@@ -114,7 +118,7 @@ func newSessionsRmCmd(rf *rootFlags) *cobra.Command {
 					return fmt.Errorf("list volumes: %w", err)
 				}
 				for _, v := range volumes.Volumes {
-					if v.Labels[sandbox.Label] == "true" {
+					if v.Labels[sandbox.Label] == "true" && !isCacheVolume(v.Name) {
 						targets = append(targets, v.Name)
 					}
 				}

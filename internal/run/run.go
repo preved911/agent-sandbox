@@ -46,6 +46,18 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 		})
 	}
 
+	// Mount cache volumes.
+	for _, c := range cfg.Run.Cache {
+		if c.Name == "" || c.Path == "" {
+			continue
+		}
+		otherMounts = append(otherMounts, mount.Mount{
+			Type:   mount.TypeVolume,
+			Source: sandbox.CacheName(hash, c.Name),
+			Target: c.Path,
+		})
+	}
+
 	name := sandbox.ResourceName(hash, sandbox.SuffixAgent)
 	labels := sandbox.DefaultLabels(hash, path, "")
 
@@ -118,6 +130,18 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 			Type:   mount.TypeVolume,
 			Source: volumeName,
 			Target: cfg.Run.DataDir,
+		})
+	}
+
+	// Mount cache volumes.
+	for _, c := range cfg.Run.Cache {
+		if c.Name == "" || c.Path == "" {
+			continue
+		}
+		otherMounts = append(otherMounts, mount.Mount{
+			Type:   mount.TypeVolume,
+			Source: sandbox.CacheName(hash, c.Name),
+			Target: c.Path,
 		})
 	}
 

@@ -37,6 +37,7 @@ func newRootCmd() *cobra.Command {
 		newStopCmd(rf),
 		newLogsCmd(rf),
 		newSessionsCmd(rf),
+		newCachesCmd(rf),
 		newConfigCmd(rf),
 		newPsCmd(rf),
 		newRmCmd(rf),

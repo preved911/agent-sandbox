@@ -42,6 +42,15 @@ const (
 	SuffixNet      = "-net"
 )
 
+// CacheLabel marks a Docker volume as a sandbox cache.
+const CacheLabel = "agent-sandbox.cache"
+
+// CacheName returns a Docker volume name for a cache entry.
+// Example: CacheName("a1b2c3d4", "npm") → "agent-sandbox-a1b2c3d4-cache-npm"
+func CacheName(hash, cacheName string) string {
+	return Label + "-" + hash + "-cache-" + cacheName
+}
+
 // HashPath returns an 8-character hex hash derived from an absolute path.
 // The hash is deterministic: the same path always produces the same hash.
 // The path is cleaned (via filepath.Clean) before hashing so that trailing
