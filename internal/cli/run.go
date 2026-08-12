@@ -151,9 +151,9 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 
 			// Use config-defined attach command if available.
-			if len(cfg.Run.AttachCmd) > 0 {
-				args := make([]string, len(cfg.Run.AttachCmd))
-				for i, a := range cfg.Run.AttachCmd {
+			if len(cfg.Run.Attach) > 0 {
+				args := make([]string, len(cfg.Run.Attach))
+				for i, a := range cfg.Run.Attach {
 					args[i] = strings.ReplaceAll(a, "%s", url)
 				}
 				fmt.Fprintf(out, "$ %s\n", strings.Join(args, " "))

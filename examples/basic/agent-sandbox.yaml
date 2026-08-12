@@ -26,7 +26,7 @@ profiles:
       entrypoint: ["opencode"]
       command: ["serve", "--hostname=0.0.0.0", "--port=4096"]
       data_dir: /root/.local/share/opencode
-      attach_cmd: ["opencode", "attach", "%s"]
+      attach: ["opencode", "attach", "%s"]
 
       env:
         OPENCODE_TELEMETRY: "0"

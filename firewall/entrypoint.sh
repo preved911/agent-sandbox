@@ -127,7 +127,7 @@ cat >> /etc/nftables.conf <<NFTABLES_EOF
         type nat hook postrouting priority 100;
 
         # SNAT outbound traffic from agent to internet
-        ip saddr 172.20.0.0/16 oifname "$OUTSIDE_IF" masquerade
+        ip saddr ${SUBNET:-10.0.0.0/8} oifname "$OUTSIDE_IF" masquerade
     }
 }
 

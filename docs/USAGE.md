@@ -143,7 +143,7 @@ profiles:
       entrypoint: ["opencode"]
       command: ["serve", "--hostname=0.0.0.0", "--port=4096"]
       data_dir: /root/.local/share/opencode
-      attach_cmd: "opencode attach %s"
+      attach: "opencode attach %s"
 
       mounts:
         # Host opencode config (RO — inherits settings)
@@ -523,7 +523,7 @@ profiles:
       entrypoint: ["opencode"]
       command: ["serve", "--hostname=0.0.0.0", "--port=4096"]
       data_dir: /root/.local/share/opencode
-      attach_cmd: "opencode attach %s"
+      attach: "opencode attach %s"
       env:
         GOFLAGS: "-mod=mod"
       workdir: /workspace
@@ -539,7 +539,7 @@ profiles:
       entrypoint: ["opencode"]
       command: ["serve", "--hostname=0.0.0.0", "--port=4096"]
       data_dir: /root/.local/share/opencode
-      attach_cmd: "opencode attach %s"
+      attach: "opencode attach %s"
       env:
         NODE_ENV: development
       workdir: /workspace
@@ -587,7 +587,7 @@ agent-sandbox -p node-dev run   # Node.js project
 | `--env KEY=VALUE` | `-e` | Set or override an env var; repeatable |
 | `--mount source:target[:ro]` | `-v` | Append a mount; repeatable |
 | `--bind IP` | | Override `run.port.bind` (e.g. `0.0.0.0` for LAN) |
-| `--cmd` | | Override the attach command (default: `run.attach_cmd` from config) |
+| `--cmd` | | Override the attach command (default: `run.attach` from config) |
 | `--no-build` | | Skip the build step |
 | `--pull` | | Pass `--pull` to `docker build` |
 

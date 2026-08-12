@@ -236,13 +236,14 @@ type StackStatus struct {
 	Network  string
 }
 
-// agentIP is the fixed IP for the agent container on the isolated network.
-// The firewall DNAT rule forwards published port traffic to this IP.
-const agentIP = "172.20.0.10"
+// agentIP is derived from the hash — see sandboxnet.AgentIPFromHash.
 
 func (s *Stack) createFirewall(ctx context.Context) error {
 	fwName := sandbox.ResourceName(s.hash, sandbox.SuffixFirewall)
 	networkName := sandbox.ResourceName(s.hash, sandbox.SuffixNet)
+
+	// Derive unique IPs from hash.
+	_, _, firewallIP, agentIP := sandboxnet.SubnetFromHash(s.hash)
 
 	// Ensure firewall image exists (auto-build from embedded files if missing)
 	imageTag, err := firewall.EnsureFirewallImage(ctx, s.cli, s.config.Run.Firewall.Image)
@@ -259,6 +260,10 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 
 	// Add the agent's container port so firewall knows which port to DNAT.
 	envSlice = append(envSlice, "AGENT_PORT="+s.config.Run.Port.Container)
+
+	// Add subnet for SNAT rule.
+	_, subnet, _, _ := sandboxnet.SubnetFromHash(s.hash)
+	envSlice = append(envSlice, "SUBNET="+subnet)
 
 	labels := sandbox.DefaultLabels(s.hash, "", "")
 	labels[sandbox.SandboxRole] = "firewall"
@@ -277,7 +282,7 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 			"bridge": {}, // default bridge for port publishing
 			networkName: {
 				IPAMConfig: &dockernet.EndpointIPAMConfig{
-					IPv4Address: "172.20.0.2",
+					IPv4Address: firewallIP,
 				},
 			},
 		},

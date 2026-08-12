@@ -18,8 +18,9 @@ type DNATConfig struct {
 // GenerateNftablesConfig generates an nftables configuration from network rules.
 // Deny rules are emitted BEFORE allow rules (deny wins).
 // If dnat is non-nil, a PREROUTING DNAT rule is added to forward traffic to the agent.
+// subnet is the sandbox's /24 subnet (e.g. "10.161.0.0/24") for the SNAT rule.
 // Returns the full nftables config as a string.
-func GenerateNftablesConfig(fwCfg *config.FirewallConfig, outsideIF string, dnat *DNATConfig) string {
+func GenerateNftablesConfig(fwCfg *config.FirewallConfig, outsideIF string, dnat *DNATConfig, subnet string) string {
 	var b strings.Builder
 
 	b.WriteString("#!/usr/sbin/nft -f\n\n")
@@ -90,7 +91,12 @@ func GenerateNftablesConfig(fwCfg *config.FirewallConfig, outsideIF string, dnat
 	b.WriteString("    chain postrouting {\n")
 	b.WriteString("        type nat hook postrouting priority 100;\n\n")
 	b.WriteString("        # SNAT outbound traffic from agent to internet\n")
-	b.WriteString(fmt.Sprintf("        ip saddr 172.20.0.0/16 oifname \"%s\" masquerade\n", outsideIF))
+	if subnet != "" {
+		b.WriteString(fmt.Sprintf("        ip saddr %s oifname \"%s\" masquerade\n", subnet, outsideIF))
+	} else {
+		// Fallback for tests — use a generic private range
+		b.WriteString(fmt.Sprintf("        ip saddr 10.0.0.0/8 oifname \"%s\" masquerade\n", outsideIF))
+	}
 	b.WriteString("    }\n")
 
 	b.WriteString("}\n")
@@ -99,8 +105,8 @@ func GenerateNftablesConfig(fwCfg *config.FirewallConfig, outsideIF string, dnat
 }
 
 // GenerateNftablesConfigWithReverse generates nftables config with DNAT rules for host→agent access.
-func GenerateNftablesConfigWithReverse(fwCfg *config.FirewallConfig, dnat *DNATConfig, outsideIF string) string {
-	return GenerateNftablesConfig(fwCfg, outsideIF, dnat)
+func GenerateNftablesConfigWithReverse(fwCfg *config.FirewallConfig, dnat *DNATConfig, outsideIF string, subnet string) string {
+	return GenerateNftablesConfig(fwCfg, outsideIF, dnat, subnet)
 }
 
 // ValidateCIDRRules checks for conflicts between allow and deny CIDR lists.

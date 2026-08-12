@@ -16,16 +16,16 @@ import (
 
 	"github.com/preved911/agent-sandbox/internal/config"
 	"github.com/preved911/agent-sandbox/internal/paths"
+	sandboxnet "github.com/preved911/agent-sandbox/internal/network"
 	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
-
-// AgentIP is the fixed IP for the agent container on the isolated network.
-// The firewall DNAT rule forwards published port traffic to this IP.
-const AgentIP = "172.20.0.10"
 
 // Create creates a container named name running image without starting it.
 // The container is created on the isolated network with a fixed IP.
 func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, hash string) error {
+	// Derive unique IPs from hash.
+	_, _, firewallIP, agentIP := sandboxnet.SubnetFromHash(hash)
+
 	envSlice := make([]string, 0, len(cfg.Run.Env))
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
@@ -66,7 +66,7 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 			Name: container.RestartPolicyUnlessStopped,
 		},
 		// DNS points to the firewall container so all DNS queries are filtered by CoreDNS.
-		DNS: []string{"172.20.0.2"},
+		DNS: []string{firewallIP},
 	}
 
 	// Create on the isolated network with a fixed IP.
@@ -76,7 +76,7 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 		EndpointsConfig: map[string]*dockernet.EndpointSettings{
 			networkName: {
 				IPAMConfig: &dockernet.EndpointIPAMConfig{
-					IPv4Address: AgentIP,
+					IPv4Address: agentIP,
 				},
 			},
 		},
@@ -94,6 +94,9 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 // This function is retained for direct use; the stack orchestrator calls
 // ContainerStart directly instead.
 func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, name, hash string) (*Result, error) {
+	// Derive unique IPs from hash.
+	_, _, firewallIP, agentIP := sandboxnet.SubnetFromHash(hash)
+
 	envSlice := make([]string, 0, len(cfg.Run.Env))
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
@@ -133,7 +136,7 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 		RestartPolicy: container.RestartPolicy{
 			Name: container.RestartPolicyUnlessStopped,
 		},
-		DNS: []string{"172.20.0.2"},
+		DNS: []string{firewallIP},
 	}
 
 	// Create on the isolated network with a fixed IP.
@@ -142,7 +145,7 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 		EndpointsConfig: map[string]*dockernet.EndpointSettings{
 			networkName: {
 				IPAMConfig: &dockernet.EndpointIPAMConfig{
-					IPv4Address: AgentIP,
+					IPv4Address: agentIP,
 				},
 			},
 		},

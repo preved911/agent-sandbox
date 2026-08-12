@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
@@ -13,10 +14,16 @@ import (
 	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
-// requiredSubnet is the fixed subnet for all sandbox networks.
-// The gateway (172.20.0.1) is reserved for host-side proxy goroutines.
-// The firewall uses 172.20.0.2.
-const requiredSubnet = "172.20.0.0/16"
+// SubnetFromHash derives a unique /24 subnet from the sandbox hash.
+// Returns subnet, gateway, firewall IP, and agent IP.
+// Uses the first 4 hex chars of the hash as two octets in the 10.x.x.0/24 range,
+// giving 65536 possible unique subnets per sandbox.
+func SubnetFromHash(hash string) (subnet, gateway, firewallIP, agentIP string) {
+	b1, _ := strconv.ParseInt(hash[0:2], 16, 64)
+	b2, _ := strconv.ParseInt(hash[2:4], 16, 64)
+	prefix := fmt.Sprintf("10.%d.%d", b1, b2)
+	return prefix + ".0/24", prefix + ".1", prefix + ".2", prefix + ".10"
+}
 
 // Create creates an isolated Docker bridge network for the sandbox.
 // The network has no default gateway to the host bridge — the firewall
@@ -24,7 +31,7 @@ const requiredSubnet = "172.20.0.0/16"
 //
 // Network name: agent-sandbox-<hash>-net
 //
-// Returns the network ID and the gateway IP (firewall's expected IP).
+// Returns the network ID.
 func Create(ctx context.Context, cli *client.Client, hash string) (networkID string, err error) {
 	name := sandbox.ResourceName(hash, sandbox.SuffixNet)
 
@@ -51,17 +58,19 @@ func Create(ctx context.Context, cli *client.Client, hash string) (networkID str
 		}
 	}
 
-	// Create isolated bridge network with fixed subnet.
+	// Derive unique subnet from hash to avoid collisions with other Docker networks.
+	subnet, gateway, _, _ := SubnetFromHash(hash)
+	_, ipNet, _ := net.ParseCIDR(subnet)
+
+	// Create isolated bridge network with unique subnet.
 	// Internal = true means no default gateway to the host — traffic only
 	// flows through containers attached to this network.
-	// Subnet 172.20.0.0/16 is fixed so the gateway (172.20.0.1) and
-	// firewall (172.20.0.2) IPs are predictable.
 	resp, err := cli.NetworkCreate(ctx, name, network.CreateOptions{
 		Driver:   "bridge",
 		Internal: true,
 		IPAM: &network.IPAM{
 			Config: []network.IPAMConfig{
-				{Subnet: requiredSubnet, Gateway: "172.20.0.1"},
+				{Subnet: ipNet.String(), Gateway: gateway},
 			},
 		},
 		Labels: map[string]string{
@@ -82,18 +91,27 @@ func hasSubnet(ctx context.Context, cli *client.Client, networkID string) (bool,
 	if err != nil {
 		return false, err
 	}
-	_, required, err := net.ParseCIDR(requiredSubnet)
-	if err != nil {
-		return false, err
-	}
-	for _, cfg := range resp.IPAM.Config {
-		if cfg.Subnet != "" {
-			_, actual, err := net.ParseCIDR(cfg.Subnet)
-			if err != nil {
-				continue
-			}
-			if actual.String() == required.String() {
-				return true, nil
+	// Extract hash from network name to derive expected subnet.
+	// Network name format: agent-sandbox-<hash>-net
+	name := resp.Name
+	const prefix = "agent-sandbox-"
+	const suffix = "-net"
+	if len(name) > len(prefix)+len(suffix) {
+		hash := name[len(prefix) : len(name)-len(suffix)]
+		expected, _, _, _ := SubnetFromHash(hash)
+		_, required, err := net.ParseCIDR(expected)
+		if err != nil {
+			return false, err
+		}
+		for _, cfg := range resp.IPAM.Config {
+			if cfg.Subnet != "" {
+				_, actual, err := net.ParseCIDR(cfg.Subnet)
+				if err != nil {
+					continue
+				}
+				if actual.String() == required.String() {
+					return true, nil
+				}
 			}
 		}
 	}

@@ -16,7 +16,7 @@ func TestGenerateNftablesConfig_DenyBeforeAllow(t *testing.T) {
 		},
 	}
 
-	cfg := GenerateNftablesConfig(network, "eth0", nil)
+	cfg := GenerateNftablesConfig(network, "eth0", nil, "10.161.0.0/24")
 
 	// Deny rules must appear before allow rules
 	denyIdx := strings.Index(cfg, "ip daddr 10.0.0.0/24 drop")
@@ -38,7 +38,7 @@ func TestGenerateNftablesConfig_DefaultDeny(t *testing.T) {
 		Default: "deny",
 	}
 
-	cfg := GenerateNftablesConfig(network, "eth0", nil)
+	cfg := GenerateNftablesConfig(network, "eth0", nil, "")
 
 	if !strings.Contains(cfg, "drop comment \"default-deny\"") {
 		t.Error("expected default-deny policy")
@@ -50,7 +50,7 @@ func TestGenerateNftablesConfig_DefaultAllow(t *testing.T) {
 		Default: "allow",
 	}
 
-	cfg := GenerateNftablesConfig(network, "eth0", nil)
+	cfg := GenerateNftablesConfig(network, "eth0", nil, "")
 
 	if !strings.Contains(cfg, "accept comment \"default-allow\"") {
 		t.Error("expected default-allow policy")
@@ -58,9 +58,9 @@ func TestGenerateNftablesConfig_DefaultAllow(t *testing.T) {
 }
 
 func TestGenerateNftablesConfig_SNAT(t *testing.T) {
-	cfg := GenerateNftablesConfig(nil, "eth1", nil)
+	cfg := GenerateNftablesConfig(nil, "eth1", nil, "10.161.0.0/24")
 
-	if !strings.Contains(cfg, "ip saddr 172.20.0.0/16") {
+	if !strings.Contains(cfg, "ip saddr 10.161.0.0/24") {
 		t.Error("expected SNAT rule for agent subnet")
 	}
 	if !strings.Contains(cfg, "oifname \"eth1\"") {
@@ -68,8 +68,16 @@ func TestGenerateNftablesConfig_SNAT(t *testing.T) {
 	}
 }
 
+func TestGenerateNftablesConfig_SNATFallback(t *testing.T) {
+	cfg := GenerateNftablesConfig(nil, "eth0", nil, "")
+
+	if !strings.Contains(cfg, "ip saddr 10.0.0.0/8") {
+		t.Error("expected fallback SNAT rule")
+	}
+}
+
 func TestGenerateNftablesConfig_Established(t *testing.T) {
-	cfg := GenerateNftablesConfig(nil, "eth0", nil)
+	cfg := GenerateNftablesConfig(nil, "eth0", nil, "")
 
 	if !strings.Contains(cfg, "ct state established,related accept") {
 		t.Error("expected established/related rule")
@@ -85,7 +93,7 @@ func TestGenerateNftablesConfig_DNAT(t *testing.T) {
 		AgentPort: "4096/tcp",
 	}
 
-	cfg := GenerateNftablesConfig(nil, "eth0", dnat)
+	cfg := GenerateNftablesConfig(nil, "eth0", dnat, "")
 
 	if !strings.Contains(cfg, "prerouting") {
 		t.Error("expected prerouting chain")
@@ -99,7 +107,7 @@ func TestGenerateNftablesConfig_DNAT(t *testing.T) {
 }
 
 func TestGenerateNftablesConfig_NoDNAT(t *testing.T) {
-	cfg := GenerateNftablesConfig(nil, "eth0", nil)
+	cfg := GenerateNftablesConfig(nil, "eth0", nil, "")
 
 	if strings.Contains(cfg, "prerouting") {
 		t.Error("should not have prerouting chain when dnat is nil")
@@ -113,7 +121,7 @@ func TestGenerateNftablesConfigWithReverse(t *testing.T) {
 		AgentPort: "4096/tcp",
 	}
 
-	cfg := GenerateNftablesConfigWithReverse(network, dnat, "eth0")
+	cfg := GenerateNftablesConfigWithReverse(network, dnat, "eth0", "10.161.0.0/24")
 
 	if !strings.Contains(cfg, "dnat to 172.20.0.10") {
 		t.Error("expected DNAT rule in combined config")

@@ -67,7 +67,7 @@ type RunConfig struct {
 	Entrypoint     []string             `yaml:"entrypoint,omitempty"`
 	Command        []string             `yaml:"command,omitempty"`
 	DataDir        string               `yaml:"data_dir,omitempty"`
-	AttachCmd      []string             `yaml:"attach_cmd,omitempty"`
+	Attach         []string             `yaml:"attach,omitempty"`
 	ReverseForward ReverseForwardConfig `yaml:"reverse_forward,omitempty"`
 	Firewall       FirewallConfig       `yaml:"firewall,omitempty"`
 }
