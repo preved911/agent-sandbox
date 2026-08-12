@@ -86,11 +86,15 @@ func Create(ctx context.Context, cli *client.Client, hash string) (networkID str
 	return resp.ID, nil
 }
 
-// hasSubnet checks if a network has the required subnet configured.
+// hasSubnet checks if a network has the required subnet and correct Internal flag.
 func hasSubnet(ctx context.Context, cli *client.Client, networkID string) (bool, error) {
 	resp, err := cli.NetworkInspect(ctx, networkID, network.InspectOptions{})
 	if err != nil {
 		return false, err
+	}
+	// Networks must NOT be Internal (Internal=true prevents default gateway assignment).
+	if resp.Internal {
+		return false, nil
 	}
 	// Extract hash from network name to derive expected subnet.
 	// Network name format: agent-sandbox-<hash>-net
