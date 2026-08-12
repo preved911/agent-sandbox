@@ -3,11 +3,9 @@ package cli
 import (
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/creack/pty"
 	"github.com/spf13/cobra"
@@ -139,29 +137,6 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 
 			url := fmt.Sprintf("http://%s:%s", bindIP, port)
 			out := cmd.OutOrStdout()
-
-			// Wait for the opencode HTTP server to be ready before attaching.
-			// A TCP check alone is not sufficient — Docker's port forwarding
-			// accepts connections before the HTTP handler is initialized.
-			fmt.Fprintf(out, "Waiting for agent to be ready...\n")
-			client := &http.Client{Timeout: 2 * time.Second}
-			deadline := time.Now().Add(60 * time.Second)
-			for time.Now().Before(deadline) {
-				resp, err := client.Get(url)
-				if err == nil {
-					resp.Body.Close()
-					break
-				}
-				time.Sleep(time.Second)
-			}
-			// Final check — if still not ready, proceed anyway (attach will show error).
-			resp, err := client.Get(url)
-			if err != nil {
-				fmt.Fprintf(out, "Warning: agent not ready after 60s, attempting attach anyway...\n")
-			} else {
-				resp.Body.Close()
-				fmt.Fprintf(out, "Agent is ready.\n")
-			}
 
 			// Resolve the attach command (flag takes priority over config).
 			var cmdArgs []string
