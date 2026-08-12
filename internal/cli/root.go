@@ -40,6 +40,7 @@ func newRootCmd() *cobra.Command {
 		newConfigCmd(rf),
 		newPsCmd(rf),
 		newRmCmd(rf),
+		newVersionCmd(),
 	)
 	return cmd
 }
