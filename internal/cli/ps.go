@@ -63,11 +63,10 @@ func newPsCmd(rf *rootFlags) *cobra.Command {
 			}
 
 			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "HASH\tNAME\tSTATUS\tPORT\tPATH")
+			fmt.Fprintln(tw, "HASH\tSTATUS\tPORT\tPATH")
 			for _, s := range sandboxes {
-				name := sandbox.ResourceName(s.hash, "")
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-					s.hash, name, s.status, s.port, s.path)
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
+					s.hash, s.status, s.port, s.path)
 			}
 			return tw.Flush()
 		},
