@@ -250,6 +250,12 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 	fwName := sandbox.ResourceName(s.hash, sandbox.SuffixFirewall)
 	networkName := sandbox.ResourceName(s.hash, sandbox.SuffixNet)
 
+	// Ensure firewall image exists (auto-build from embedded files if missing)
+	imageTag, err := firewall.EnsureFirewallImage(ctx, s.cli, s.config.Firewall.Image)
+	if err != nil {
+		return fmt.Errorf("ensure firewall image: %w", err)
+	}
+
 	// Build firewall env vars from config
 	fw := firewall.NewFirewallContainer(s.cli, s.hash)
 	envSlice := fw.FirewallEnv(&s.config.Firewall.Network)
@@ -258,7 +264,7 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 	labels[sandbox.SandboxRole] = "firewall"
 
 	cConf := &container.Config{
-		Image:  "agent-sandbox-firewall:latest",
+		Image:  imageTag,
 		Labels: labels,
 		Env:    envSlice,
 	}
@@ -284,7 +290,7 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 		},
 	}
 
-	_, err := s.cli.ContainerCreate(ctx, cConf, hConf, nConf, nil, fwName)
+	_, err = s.cli.ContainerCreate(ctx, cConf, hConf, nConf, nil, fwName)
 	return err
 }
 
