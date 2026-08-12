@@ -176,7 +176,8 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				}
 				fmt.Fprintf(out, "$ %s\n", strings.Join(args, " "))
 
-				// Retry attach with backoff — opencode may still be initializing.
+				// Retry attach with backoff — opencode server may accept TCP
+				// connections before its HTTP handler is fully initialized.
 				const maxAttempts = 5
 				for attempt := 1; attempt <= maxAttempts; attempt++ {
 					c := exec.CommandContext(ctx, args[0], args[1:]...)
@@ -190,11 +191,22 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 						}
 						return fmt.Errorf("attach command after %d attempts: %w", maxAttempts, err)
 					}
-					defer f.Close()
 					// Connect user's terminal to the PTY.
 					go io.Copy(f, os.Stdin)
 					io.Copy(os.Stdout, f)
-					return c.Wait()
+					waitErr := c.Wait()
+					f.Close()
+					if waitErr == nil {
+						return nil
+					}
+					// Attach process exited with error — retry.
+					if attempt < maxAttempts {
+						backoff := time.Duration(attempt) * 2 * time.Second
+						fmt.Fprintf(out, "Attach failed (attempt %d/%d), retrying in %v...\n", attempt, maxAttempts, backoff)
+						time.Sleep(backoff)
+						continue
+					}
+					return fmt.Errorf("attach command after %d attempts: %w", maxAttempts, waitErr)
 				}
 			}
 
