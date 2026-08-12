@@ -22,6 +22,7 @@ func newSessionCmd(rf *rootFlags) *cobra.Command {
 	cmd.AddCommand(
 		newSessionLsCmd(rf),
 		newSessionRmCmd(rf),
+		newSessionPruneCmd(rf),
 	)
 	return cmd
 }
@@ -29,9 +30,10 @@ func newSessionCmd(rf *rootFlags) *cobra.Command {
 func newSessionLsCmd(rf *rootFlags) *cobra.Command {
 	var quiet bool
 	cmd := &cobra.Command{
-		Use:   "ls",
-		Short: "List sandbox session volumes",
-		Args:  cobra.NoArgs,
+		Use:     "ls",
+		Aliases: []string{"list"},
+		Short:   "List sandbox session volumes",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cli, err := docker.NewClient("")
 			if err != nil {
@@ -152,5 +154,62 @@ func newSessionRmCmd(rf *rootFlags) *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation prompt")
 	cmd.Flags().BoolVar(&all, "all", false, "remove all sandbox session volumes")
+	return cmd
+}
+
+func newSessionPruneCmd(rf *rootFlags) *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Remove all sandbox session volumes",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cli, err := docker.NewClient("")
+			if err != nil {
+				return err
+			}
+			defer cli.Close()
+
+			ctx := cmd.Context()
+			out := cmd.OutOrStdout()
+
+			volumes, err := cli.VolumeList(ctx, volume.ListOptions{})
+			if err != nil {
+				return fmt.Errorf("list volumes: %w", err)
+			}
+
+			var targets []string
+			for _, v := range volumes.Volumes {
+				if v.Labels[sandbox.Label] == "true" && !isCacheVolume(v.Name) {
+					targets = append(targets, v.Name)
+				}
+			}
+
+			if len(targets) == 0 {
+				fmt.Fprintln(out, "No sandbox session volumes to prune.")
+				return nil
+			}
+
+			if !force {
+				fmt.Fprintf(out, "This will remove %d session volumes. Data will be lost.\n", len(targets))
+				fmt.Fprintf(out, "Use --force to confirm.\n")
+				return nil
+			}
+
+			var firstErr error
+			for _, name := range targets {
+				if err := cli.VolumeRemove(ctx, name, true); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "error: remove %s: %v\n", name, err)
+					if firstErr == nil {
+						firstErr = err
+					}
+					continue
+				}
+				fmt.Fprintln(out, name)
+			}
+			return firstErr
+		},
+	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "skip confirmation prompt")
 	return cmd
 }

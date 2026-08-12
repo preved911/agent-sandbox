@@ -26,8 +26,9 @@ type sandboxInfo struct {
 func newPsCmd(rf *rootFlags) *cobra.Command {
 	var all, quiet bool
 	cmd := &cobra.Command{
-		Use:   "ps",
-		Short: "List sandboxes (one row per sandbox, not per container)",
+		Use:     "ls",
+		Aliases: []string{"ps", "list"},
+		Short:   "List sandboxes (one row per sandbox, not per container)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cli, err := docker.NewClient("")
