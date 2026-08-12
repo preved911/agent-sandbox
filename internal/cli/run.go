@@ -183,17 +183,19 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 
 			const maxRetries = 3
-			for attempt := 1; attempt <= maxRetries; attempt++ {
+			attempt := 0
+		retry:
+			for attempt < maxRetries {
+				attempt++
 				if attempt > 1 {
 					fmt.Fprintf(out, "\nRetrying (attempt %d/%d)...\n", attempt, maxRetries)
 					time.Sleep(2 * time.Second)
 				}
 
 				// Wait for agent container to be ready (HTTP server must be listening).
-				// First run may take a few seconds as the container initializes.
 				fmt.Fprint(out, "Waiting for agent to be ready...")
 				ready := false
-				for i := 0; i < 30; i++ { // up to 30 seconds
+				for i := 0; i < 30; i++ {
 					pingCfg := container.ExecOptions{
 						Cmd:          []string{"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--connect-timeout", "1", "http://localhost:4096"},
 						AttachStdout: true,
@@ -218,7 +220,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				if !ready {
 					if attempt < maxRetries {
 						fmt.Fprintln(out, "Agent not ready, retrying...")
-						continue
+						goto retry
 					}
 					return fmt.Errorf("timeout waiting for agent container to be ready")
 				}
@@ -239,7 +241,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				// Get current terminal size for initial PTY dimensions.
 				w, h, err := term.GetSize(int(os.Stdin.Fd()))
 				if err != nil {
-					w, h = 80, 24 // fallback
+					w, h = 80, 24
 				}
 				consoleSize := [2]uint{uint(h), uint(w)}
 
@@ -252,7 +254,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 					continue
 				}
 
-				// Put host terminal into raw mode (same as Docker CLI does).
+				// Put host terminal into raw mode.
 				oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 				if err != nil {
 					attachResp.Close()
@@ -272,15 +274,12 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 						}
 					}
 				}()
-				// Trigger initial resize.
 				sig <- syscall.SIGWINCH
 
-				// Use a cancellable context so SIGINT can unblock io.Copy.
+				// Cancellable context for SIGINT handling.
 				copyCtx, copyCancel := context.WithCancel(ctx)
 				defer copyCancel()
 
-				// Handle SIGINT: cancel the copy context to unblock io.Copy,
-				// then check if exec is still running (retry) or dead (exit).
 				sigInt := make(chan os.Signal, 1)
 				signal.Notify(sigInt, syscall.SIGINT)
 				go func() {
@@ -288,17 +287,25 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 					copyCancel()
 				}()
 
-				// Bidirectional copy: user terminal ↔ Docker exec stream.
-				// cancelReader wraps stdin so io.Copy returns when context is cancelled.
-				go io.Copy(attachResp.Conn, cancelReader{ctx: copyCtx, r: os.Stdin})
-				io.Copy(os.Stdout, cancelReader{ctx: copyCtx, r: attachResp.Reader})
+				// Bidirectional copy with hang detection.
+				// stdout uses copyWithTimeout — if no data arrives within
+				// 60s, it returns and the loop retries automatically.
+				copyDone := make(chan error, 1)
+				go func() {
+					io.Copy(attachResp.Conn, cancelReader{ctx: copyCtx, r: os.Stdin})
+				}()
+				go func() {
+					copyDone <- copyWithTimeout(os.Stdout, attachResp.Reader, 60*time.Second)
+				}()
+				<-copyDone
 
 				signal.Stop(sig)
 				signal.Stop(sigInt)
 				attachResp.Close()
 				term.Restore(int(os.Stdin.Fd()), oldState)
 
-				// Wait for exec to finish.
+				// Wait for exec to finish — with a short deadline.
+				waitDeadline := time.After(5 * time.Second)
 				for {
 					inspect, err := dockerCli.ContainerExecInspect(ctx, resp.ID)
 					if err != nil {
@@ -308,15 +315,23 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 						if inspect.ExitCode != 0 {
 							fmt.Fprintf(out, "Attach exited with code %d\n", inspect.ExitCode)
 							if attempt < maxRetries {
-								continue // retry outer loop
+								goto retry
 							}
 							return fmt.Errorf("exec exited with code %d", inspect.ExitCode)
 						}
-						return nil // success
+						return nil
 					}
-					time.Sleep(100 * time.Millisecond)
+					select {
+					case <-waitDeadline:
+						fmt.Fprintln(out, "Attach timed out, retrying...")
+						if attempt < maxRetries {
+							goto retry
+						}
+						return fmt.Errorf("attach timed out after %d attempts", maxRetries)
+					default:
+						time.Sleep(100 * time.Millisecond)
+					}
 				}
-				break // exec finished successfully
 			}
 		} else {
 			// No attach command configured — print URL for manual connection.
@@ -365,4 +380,27 @@ func parseMountFlag(s string) (config.Mount, error) {
 		m.ReadOnly = true
 	}
 	return m, nil
+}
+
+// copyWithTimeout copies from src to dst, returning nil on EOF or an error if
+// no data arrives within timeout. This detects hangs where the remote end
+// stops sending data without closing the connection.
+func copyWithTimeout(dst io.Writer, src io.Reader, timeout time.Duration) error {
+	buf := make([]byte, 32*1024)
+	for {
+		timer := time.AfterFunc(timeout, func() {})
+		n, err := src.Read(buf)
+		timer.Stop()
+		if n > 0 {
+			if _, wErr := dst.Write(buf[:n]); wErr != nil {
+				return wErr
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
 }
