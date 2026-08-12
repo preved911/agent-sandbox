@@ -157,35 +157,41 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				fmt.Fprintf(out, "Agent is ready.\n")
 			}
 
-			// Execute attach command.
-			if len(attachCmd) > 0 {
-				args := make([]string, len(attachCmd))
-				for i, a := range attachCmd {
-					args[i] = strings.ReplaceAll(a, "%s", url)
-				}
-				fmt.Fprintf(out, "$ %s\n", strings.Join(args, " "))
-				c := exec.CommandContext(ctx, args[0], args[1:]...)
-				c.Stdout = out
-				c.Stderr = cmd.ErrOrStderr()
-				c.Stdin = os.Stdin
-				return c.Run()
+			// Resolve the attach command (flag takes priority over config).
+			var cmdArgs []string
+			switch {
+			case len(attachCmd) > 0:
+				cmdArgs = attachCmd
+			case len(cfg.Run.Attach) > 0:
+				cmdArgs = cfg.Run.Attach
 			}
 
-			// Use config-defined attach command if available.
-			if len(cfg.Run.Attach) > 0 {
-				args := make([]string, len(cfg.Run.Attach))
-				for i, a := range cfg.Run.Attach {
+			if cmdArgs != nil {
+				// Build the final args with URL substitution.
+				args := make([]string, len(cmdArgs))
+				for i, a := range cmdArgs {
 					args[i] = strings.ReplaceAll(a, "%s", url)
 				}
 				fmt.Fprintf(out, "$ %s\n", strings.Join(args, " "))
-				c := exec.CommandContext(ctx, args[0], args[1:]...)
-				c.Stdout = out
-				c.Stderr = cmd.ErrOrStderr()
-				c.Stdin = os.Stdin
-				if err := c.Run(); err != nil {
-					return fmt.Errorf("attach command: %w", err)
+
+				// Retry attach with backoff — opencode may still be initializing.
+				const maxAttempts = 5
+				for attempt := 1; attempt <= maxAttempts; attempt++ {
+					c := exec.CommandContext(ctx, args[0], args[1:]...)
+					c.Stdout = out
+					c.Stderr = cmd.ErrOrStderr()
+					c.Stdin = os.Stdin
+					if err := c.Run(); err != nil {
+						if attempt < maxAttempts {
+							backoff := time.Duration(attempt) * 2 * time.Second
+							fmt.Fprintf(out, "Attach failed (attempt %d/%d), retrying in %v...\n", attempt, maxAttempts, backoff)
+							time.Sleep(backoff)
+							continue
+						}
+						return fmt.Errorf("attach command after %d attempts: %w", maxAttempts, err)
+					}
+					return nil
 				}
-				return nil
 			}
 
 			// No attach command configured — print URL for manual connection.
