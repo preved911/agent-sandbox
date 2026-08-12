@@ -4,12 +4,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"os/signal"
 	"strings"
-	"syscall"
+	"time"
 
-	"github.com/creack/pty"
+	"github.com/docker/docker/api/types/container"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -160,42 +158,66 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 					args[i] = strings.ReplaceAll(a, "%s", localURL)
 				}
 
-			// Run attach inside the agent container via docker exec.
-			// We allocate a host-side PTY and connect docker exec to it,
-			// so Docker sees a real terminal with correct size and raw mode.
-			// The user's terminal connects to the PTY master.
+			// Run attach inside the agent container via Docker exec API.
+			// This is identical to what `docker exec -it` does internally:
+			// 1. Create exec with TTY=true
+			// 2. Attach (opens bidirectional stream)
+			// 3. Put host terminal into raw mode
+			// 4. Copy bytes bidirectionally
+			// We do it via SDK so we control the raw mode on the correct fd.
 			agentName := sandbox.ResourceName(hash, sandbox.SuffixAgent)
-			execArgs := append([]string{"exec", "-it",
-				"-e", "TERM=xterm-256color",
-				agentName}, args...)
 
-			c := exec.CommandContext(ctx, "docker", execArgs...)
-			f, err := pty.Start(c)
+			dockerCli, err := docker.NewClient("")
 			if err != nil {
-				return fmt.Errorf("attach: %w", err)
+				return fmt.Errorf("docker client: %w", err)
 			}
 
-			// Set PTY size to match the user's terminal.
-			if w, h, err := term.GetSize(int(os.Stdin.Fd())); err == nil {
-				pty.Setsize(f, &pty.Winsize{Rows: uint16(h), Cols: uint16(w)})
+			execCfg := container.ExecOptions{
+				AttachStdin:  true,
+				AttachStdout: true,
+				AttachStderr: true,
+				Tty:          true,
+				Env:          []string{"TERM=xterm-256color"},
+				Cmd:          args,
+			}
+			resp, err := dockerCli.ContainerExecCreate(ctx, agentName, execCfg)
+			if err != nil {
+				return fmt.Errorf("exec create: %w", err)
 			}
 
-			// Propagate terminal resize events to the PTY.
-			sig := make(chan os.Signal, 1)
-			signal.Notify(sig, syscall.SIGWINCH)
-			go func() {
-				for range sig {
-					if w, h, err := term.GetSize(int(os.Stdin.Fd())); err == nil {
-						pty.Setsize(f, &pty.Winsize{Rows: uint16(h), Cols: uint16(w)})
-					}
+			attachResp, err := dockerCli.ContainerExecAttach(ctx, resp.ID, container.ExecStartOptions{
+				Tty: true,
+			})
+			if err != nil {
+				return fmt.Errorf("exec attach: %w", err)
+			}
+			defer attachResp.Close()
+
+			// Put host terminal into raw mode (same as Docker CLI does).
+			oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+			if err != nil {
+				return fmt.Errorf("raw mode: %w", err)
+			}
+			defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+			// Bidirectional copy: user terminal ↔ Docker exec stream.
+			go io.Copy(attachResp.Conn, os.Stdin)
+			io.Copy(os.Stdout, attachResp.Reader)
+
+			// Wait for exec to finish.
+			for {
+				inspect, err := dockerCli.ContainerExecInspect(ctx, resp.ID)
+				if err != nil {
+					return nil
 				}
-			}()
-
-			// Bidirectional copy: user terminal ↔ PTY master.
-			go io.Copy(f, os.Stdin)
-			io.Copy(os.Stdout, f)
-			signal.Stop(sig)
-			return c.Wait()
+				if !inspect.Running {
+					if inspect.ExitCode != 0 {
+						return fmt.Errorf("exec exited with code %d", inspect.ExitCode)
+					}
+					return nil
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
 			}
 
 			// No attach command configured — print URL for manual connection.
