@@ -167,13 +167,13 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				return fmt.Errorf("docker client: %w", err)
 			}
 
-			// Wait for agent container to be ready (exec `true` must succeed).
+			// Wait for agent container to be ready (HTTP server must be listening).
 			// First run may take a few seconds as the container initializes.
 			fmt.Fprint(out, "Waiting for agent to be ready...")
 			ready := false
 			for i := 0; i < 30; i++ { // up to 30 seconds
 				pingCfg := container.ExecOptions{
-					Cmd:          []string{"true"},
+					Cmd:          []string{"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--connect-timeout", "1", "http://localhost:4096"},
 					AttachStdout: true,
 					AttachStderr: true,
 				}
