@@ -8,6 +8,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/spf13/cobra"
 
@@ -81,7 +82,13 @@ func removeOne(ctx context.Context, cli *client.Client, target string, force boo
 	inspect, err := cli.ContainerInspect(ctx, target)
 	if err == nil {
 		if inspect.Config != nil && inspect.Config.Labels[sandbox.Label] == "true" {
-			return cli.ContainerRemove(ctx, inspect.ID, container.RemoveOptions{Force: force})
+			hash := inspect.Config.Labels[sandbox.LabelHash]
+			if err := cli.ContainerRemove(ctx, inspect.ID, container.RemoveOptions{Force: force}); err != nil {
+				return err
+			}
+			// Also remove the isolated network for this sandbox.
+			removeNetwork(ctx, cli, hash)
+			return nil
 		}
 		return fmt.Errorf("%s is not an agent-sandbox container; refusing to remove", target)
 	}
@@ -116,7 +123,32 @@ func removeOne(ctx context.Context, cli *client.Client, target string, force boo
 		}
 		fmt.Fprintln(os.Stdout, name)
 	}
+
+	// Also remove the isolated network for this sandbox.
+	removeNetwork(ctx, cli, hash)
+
 	return firstErr
+}
+
+// removeNetwork removes the isolated network for a sandbox hash.
+func removeNetwork(ctx context.Context, cli *client.Client, hash string) {
+	if hash == "" {
+		return
+	}
+	name := sandbox.ResourceName(hash, sandbox.SuffixNet)
+	networks, err := cli.NetworkList(ctx, network.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("name", name)),
+	})
+	if err != nil {
+		return
+	}
+	for _, n := range networks {
+		if n.Name == name {
+			_ = cli.NetworkRemove(ctx, n.ID)
+			fmt.Fprintln(os.Stdout, n.Name)
+			return
+		}
+	}
 }
 
 // extractHash extracts the 8-char hex hash from various input formats:
