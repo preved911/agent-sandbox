@@ -18,26 +18,29 @@ if [ "$CURRENT_FWD" != "1" ]; then
 fi
 
 # --- Detect interfaces ---
-# INSIDE_IF: interface facing the isolated network (agent side)
-# OUTSIDE_IF: interface facing the default bridge (internet side)
-INSIDE_IF=$(ip route show | grep 'default' | awk '{print $5}' | head -1)
-# The inside interface is the second interface (not default route)
-ALL_IFACES=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo)
+# INSIDE_IF: interface on the isolated subnet (agent side)
+# OUTSIDE_IF: interface on the default bridge (internet side)
+OUTSIDE_IF=$(ip route show default | awk '{print $5}' | head -1)
 INSIDE_IF=""
-OUTSIDE_IF=""
-FIRST=true
-for iface in $ALL_IFACES; do
-    if [ "$FIRST" = true ]; then
-        OUTSIDE_IF="$iface"
-        FIRST=false
-    else
-        INSIDE_IF="$iface"
+
+# Match interface by first 3 octets of SUBNET (works for /24)
+SUBNET_PREFIX="${SUBNET%.*}"
+
+for iface in $(ip -o addr show | awk -F': ' '{print $2}' | grep -v lo); do
+    IFACE_IP=$(ip -o addr show "$iface" | grep 'inet ' | awk '{print $4}' | head -1 | cut -d/ -f1)
+    if [ -n "$IFACE_IP" ] && [ -n "$SUBNET_PREFIX" ]; then
+        IFACE_PREFIX="${IFACE_IP%.*}"
+        if [ "$IFACE_PREFIX" = "$SUBNET_PREFIX" ]; then
+            INSIDE_IF="$iface"
+            break
+        fi
     fi
 done
 
 if [ -z "$INSIDE_IF" ] || [ -z "$OUTSIDE_IF" ]; then
-    echo "ERROR: Could not detect network interfaces"
-    echo "  ALL_IFACES=$ALL_IFACES"
+    echo "ERROR: Could not detect network interfaces (subnet=${SUBNET:-unset})"
+    echo "  Default route: $OUTSIDE_IF"
+    ip -o addr show
     exit 1
 fi
 
