@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,20 @@ import (
 	"github.com/preved911/agent-sandbox/internal/sandbox"
 	"github.com/preved911/agent-sandbox/internal/stack"
 )
+
+// cancelReader wraps an io.Reader and returns an error when the context is
+// cancelled. This allows io.Copy to unblock on SIGINT.
+type cancelReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (cr cancelReader) Read(p []byte) (int, error) {
+	if err := cr.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return cr.r.Read(p)
+}
 
 func newRunCmd(rf *rootFlags) *cobra.Command {
 	var (
@@ -150,15 +165,15 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				cmdArgs = cfg.Run.Attach
 			}
 
-			if cmdArgs != nil {
-				// Build the final args with localhost URL — the command runs
-				// inside the agent container via docker exec, so it connects
-				// to localhost:4096 where the agent service listens.
-				localURL := fmt.Sprintf("http://localhost:%s", port)
-				args := make([]string, len(cmdArgs))
-				for i, a := range cmdArgs {
-					args[i] = strings.ReplaceAll(a, "%s", localURL)
-				}
+		if cmdArgs != nil {
+			// Build the final args with localhost URL — the command runs
+			// inside the agent container via docker exec, so it connects
+			// to localhost:4096 where the agent service listens.
+			localURL := fmt.Sprintf("http://localhost:%s", port)
+			args := make([]string, len(cmdArgs))
+			for i, a := range cmdArgs {
+				args[i] = strings.ReplaceAll(a, "%s", localURL)
+			}
 
 			agentName := sandbox.ResourceName(hash, sandbox.SuffixAgent)
 
@@ -167,113 +182,148 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				return fmt.Errorf("docker client: %w", err)
 			}
 
-			// Wait for agent container to be ready (HTTP server must be listening).
-			// First run may take a few seconds as the container initializes.
-			fmt.Fprint(out, "Waiting for agent to be ready...")
-			ready := false
-			for i := 0; i < 30; i++ { // up to 30 seconds
-				pingCfg := container.ExecOptions{
-					Cmd:          []string{"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--connect-timeout", "1", "http://localhost:4096"},
-					AttachStdout: true,
-					AttachStderr: true,
+			const maxRetries = 3
+			for attempt := 1; attempt <= maxRetries; attempt++ {
+				if attempt > 1 {
+					fmt.Fprintf(out, "\nRetrying (attempt %d/%d)...\n", attempt, maxRetries)
+					time.Sleep(2 * time.Second)
 				}
-				pingResp, err := dockerCli.ContainerExecCreate(ctx, agentName, pingCfg)
-				if err == nil {
-					pingAttach, err := dockerCli.ContainerExecAttach(ctx, pingResp.ID, container.ExecStartOptions{})
+
+				// Wait for agent container to be ready (HTTP server must be listening).
+				// First run may take a few seconds as the container initializes.
+				fmt.Fprint(out, "Waiting for agent to be ready...")
+				ready := false
+				for i := 0; i < 30; i++ { // up to 30 seconds
+					pingCfg := container.ExecOptions{
+						Cmd:          []string{"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--connect-timeout", "1", "http://localhost:4096"},
+						AttachStdout: true,
+						AttachStderr: true,
+					}
+					pingResp, err := dockerCli.ContainerExecCreate(ctx, agentName, pingCfg)
 					if err == nil {
-						pingAttach.Close()
-						inspect, err := dockerCli.ContainerExecInspect(ctx, pingResp.ID)
-						if err == nil && inspect.ExitCode == 0 {
-							ready = true
-							break
+						pingAttach, err := dockerCli.ContainerExecAttach(ctx, pingResp.ID, container.ExecStartOptions{})
+						if err == nil {
+							pingAttach.Close()
+							inspect, err := dockerCli.ContainerExecInspect(ctx, pingResp.ID)
+							if err == nil && inspect.ExitCode == 0 {
+								ready = true
+								break
+							}
 						}
 					}
+					fmt.Fprint(out, ".")
+					time.Sleep(1 * time.Second)
 				}
-				fmt.Fprint(out, ".")
-				time.Sleep(1 * time.Second)
-			}
-			fmt.Fprintln(out)
-			if !ready {
-				return fmt.Errorf("timeout waiting for agent container to be ready")
-			}
-
-			execCfg := container.ExecOptions{
-				AttachStdin:  true,
-				AttachStdout: true,
-				AttachStderr: true,
-				Tty:          true,
-				Env:          []string{"TERM=xterm-256color"},
-				Cmd:          args,
-			}
-			resp, err := dockerCli.ContainerExecCreate(ctx, agentName, execCfg)
-			if err != nil {
-				return fmt.Errorf("exec create: %w", err)
-			}
-
-			// Get current terminal size for initial PTY dimensions.
-			w, h, err := term.GetSize(int(os.Stdin.Fd()))
-			if err != nil {
-				w, h = 80, 24 // fallback
-			}
-			consoleSize := [2]uint{uint(h), uint(w)}
-
-			attachResp, err := dockerCli.ContainerExecAttach(ctx, resp.ID, container.ExecStartOptions{
-				Tty:         true,
-				ConsoleSize: &consoleSize,
-			})
-			if err != nil {
-				return fmt.Errorf("exec attach: %w", err)
-			}
-			defer attachResp.Close()
-
-			// Put host terminal into raw mode (same as Docker CLI does).
-			oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-			if err != nil {
-				return fmt.Errorf("raw mode: %w", err)
-			}
-			defer term.Restore(int(os.Stdin.Fd()), oldState)
-
-			// Propagate terminal resize events to the container PTY.
-			sig := make(chan os.Signal, 1)
-			signal.Notify(sig, syscall.SIGWINCH)
-			go func() {
-				for range sig {
-					if nw, nh, err := term.GetSize(int(os.Stdin.Fd())); err == nil {
-						dockerCli.ContainerExecResize(ctx, resp.ID, container.ResizeOptions{
-							Width:  uint(nw),
-							Height: uint(nh),
-						})
+				fmt.Fprintln(out)
+				if !ready {
+					if attempt < maxRetries {
+						fmt.Fprintln(out, "Agent not ready, retrying...")
+						continue
 					}
+					return fmt.Errorf("timeout waiting for agent container to be ready")
 				}
-			}()
-			// Trigger initial resize.
-			sig <- syscall.SIGWINCH
 
-			// Bidirectional copy: user terminal ↔ Docker exec stream.
-			go io.Copy(attachResp.Conn, os.Stdin)
-			io.Copy(os.Stdout, attachResp.Reader)
-			signal.Stop(sig)
-
-			// Wait for exec to finish.
-			for {
-				inspect, err := dockerCli.ContainerExecInspect(ctx, resp.ID)
+				execCfg := container.ExecOptions{
+					AttachStdin:  true,
+					AttachStdout: true,
+					AttachStderr: true,
+					Tty:          true,
+					Env:          []string{"TERM=xterm-256color"},
+					Cmd:          args,
+				}
+				resp, err := dockerCli.ContainerExecCreate(ctx, agentName, execCfg)
 				if err != nil {
-					return nil
+					return fmt.Errorf("exec create: %w", err)
 				}
-				if !inspect.Running {
-					if inspect.ExitCode != 0 {
-						return fmt.Errorf("exec exited with code %d", inspect.ExitCode)
-					}
-					return nil
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
-			}
 
+				// Get current terminal size for initial PTY dimensions.
+				w, h, err := term.GetSize(int(os.Stdin.Fd()))
+				if err != nil {
+					w, h = 80, 24 // fallback
+				}
+				consoleSize := [2]uint{uint(h), uint(w)}
+
+				attachResp, err := dockerCli.ContainerExecAttach(ctx, resp.ID, container.ExecStartOptions{
+					Tty:         true,
+					ConsoleSize: &consoleSize,
+				})
+				if err != nil {
+					fmt.Fprintf(out, "exec attach failed: %v\n", err)
+					continue
+				}
+
+				// Put host terminal into raw mode (same as Docker CLI does).
+				oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+				if err != nil {
+					attachResp.Close()
+					return fmt.Errorf("raw mode: %w", err)
+				}
+
+				// Propagate terminal resize events to the container PTY.
+				sig := make(chan os.Signal, 1)
+				signal.Notify(sig, syscall.SIGWINCH)
+				go func() {
+					for range sig {
+						if nw, nh, err := term.GetSize(int(os.Stdin.Fd())); err == nil {
+							dockerCli.ContainerExecResize(ctx, resp.ID, container.ResizeOptions{
+								Width:  uint(nw),
+								Height: uint(nh),
+							})
+						}
+					}
+				}()
+				// Trigger initial resize.
+				sig <- syscall.SIGWINCH
+
+				// Use a cancellable context so SIGINT can unblock io.Copy.
+				copyCtx, copyCancel := context.WithCancel(ctx)
+				defer copyCancel()
+
+				// Handle SIGINT: cancel the copy context to unblock io.Copy,
+				// then check if exec is still running (retry) or dead (exit).
+				sigInt := make(chan os.Signal, 1)
+				signal.Notify(sigInt, syscall.SIGINT)
+				go func() {
+					<-sigInt
+					copyCancel()
+				}()
+
+				// Bidirectional copy: user terminal ↔ Docker exec stream.
+				// cancelReader wraps stdin so io.Copy returns when context is cancelled.
+				go io.Copy(attachResp.Conn, cancelReader{ctx: copyCtx, r: os.Stdin})
+				io.Copy(os.Stdout, cancelReader{ctx: copyCtx, r: attachResp.Reader})
+
+				signal.Stop(sig)
+				signal.Stop(sigInt)
+				attachResp.Close()
+				term.Restore(int(os.Stdin.Fd()), oldState)
+
+				// Wait for exec to finish.
+				for {
+					inspect, err := dockerCli.ContainerExecInspect(ctx, resp.ID)
+					if err != nil {
+						break
+					}
+					if !inspect.Running {
+						if inspect.ExitCode != 0 {
+							fmt.Fprintf(out, "Attach exited with code %d\n", inspect.ExitCode)
+							if attempt < maxRetries {
+								continue // retry outer loop
+							}
+							return fmt.Errorf("exec exited with code %d", inspect.ExitCode)
+						}
+						return nil // success
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+				break // exec finished successfully
+			}
+		} else {
 			// No attach command configured — print URL for manual connection.
 			fmt.Fprintf(out, "\nSandbox ready. Connect manually:\n  %s\n", url)
-			return nil
-		},
+		}
+		return nil
+	},
 	}
 	cmd.Flags().StringVar(&nameOverride, "name", "", "container name (default: <hash>-agent)")
 	cmd.Flags().BoolVar(&noBuild, "no-build", false, "skip the build step (image must already exist)")
