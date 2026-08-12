@@ -5,10 +5,13 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/creack/pty"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/preved911/agent-sandbox/internal/build"
 	"github.com/preved911/agent-sandbox/internal/config"
@@ -158,23 +161,40 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				}
 
 			// Run attach inside the agent container via docker exec.
-			// This ensures the command connects to the agent's port
-			// directly (localhost) rather than through the firewall's
-			// published port (which Docker's proxy intercepts).
-			// We use creack/pty to allocate a host-side PTY and connect
-			// docker exec to the PTY slave — Docker sees a real terminal
-			// (proper size, raw mode, key handling). The user's terminal
-			// connects to the PTY master via io.Copy.
+			// We allocate a host-side PTY and connect docker exec to it,
+			// so Docker sees a real terminal with correct size and raw mode.
+			// The user's terminal connects to the PTY master.
 			agentName := sandbox.ResourceName(hash, sandbox.SuffixAgent)
-			execArgs := append([]string{"exec", "-it", agentName}, args...)
+			execArgs := append([]string{"exec", "-it",
+				"-e", "TERM=xterm-256color",
+				agentName}, args...)
 
 			c := exec.CommandContext(ctx, "docker", execArgs...)
 			f, err := pty.Start(c)
 			if err != nil {
 				return fmt.Errorf("attach: %w", err)
 			}
+
+			// Set PTY size to match the user's terminal.
+			if w, h, err := term.GetSize(int(os.Stdin.Fd())); err == nil {
+				pty.Setsize(f, &pty.Winsize{Rows: uint16(h), Cols: uint16(w)})
+			}
+
+			// Propagate terminal resize events to the PTY.
+			sig := make(chan os.Signal, 1)
+			signal.Notify(sig, syscall.SIGWINCH)
+			go func() {
+				for range sig {
+					if w, h, err := term.GetSize(int(os.Stdin.Fd())); err == nil {
+						pty.Setsize(f, &pty.Winsize{Rows: uint16(h), Cols: uint16(w)})
+					}
+				}
+			}()
+
+			// Bidirectional copy: user terminal ↔ PTY master.
 			go io.Copy(f, os.Stdin)
 			io.Copy(os.Stdout, f)
+			signal.Stop(sig)
 			return c.Wait()
 			}
 
