@@ -264,7 +264,7 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 	envSlice = append(envSlice, "AGENT_PORT="+s.config.Run.Port.Container)
 
 	// Add subnet for SNAT rule.
-	_, subnet, _, _ := sandboxnet.SubnetFromHash(s.hash)
+	subnet, _, _, _ := sandboxnet.SubnetFromHash(s.hash)
 	envSlice = append(envSlice, "SUBNET="+subnet)
 
 	labels := sandbox.DefaultLabels(s.hash, s.path, "")
