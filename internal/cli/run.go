@@ -184,12 +184,11 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			// This ensures the command connects to the agent's port
 			// directly (localhost) rather than through the firewall's
 			// published port (which Docker's proxy intercepts).
-			// We use plain exec (no creack/pty) because docker exec -it
-			// already allocates a PTY inside the container — wrapping it
-			// in another PTY would corrupt terminal escape sequences.
+			// We use -i (interactive) without -t (no PTY allocation)
+			// because Go's exec pipes stdin/stdout as non-TTY — Docker's
+			// PTY allocation over pipes causes terminal escape corruption.
 			agentName := sandbox.ResourceName(hash, sandbox.SuffixAgent)
-			execArgs := append([]string{"exec", "-it", agentName}, args...)
-			fmt.Fprintf(out, "$ docker %s\n", strings.Join(execArgs, " "))
+			execArgs := append([]string{"exec", "-i", agentName}, args...)
 
 			c := exec.CommandContext(ctx, "docker", execArgs...)
 			c.Stdin = os.Stdin
