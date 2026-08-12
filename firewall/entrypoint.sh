@@ -176,12 +176,14 @@ COREDNS_EOF
 # Add allow domains with forward rules
 if [ -n "${ALLOW_DOMAINS:-}" ]; then
     IFS=',' read -ra DOMAINS <<< "$ALLOW_DOMAINS"
+    # Convert comma-separated upstream to space-separated for CoreDNS forward plugin
+    DNS_UPSTREAM_SPACES="${DNS_UPSTREAM//,/ }"
     for domain in "${DOMAINS[@]}"; do
         domain=$(echo "$domain" | xargs)
         if [ -n "$domain" ]; then
             cat >> /etc/coredns/Corefile <<COREDNS_ALLOW
     $domain {
-        forward . $DNS_UPSTREAM
+        forward . $DNS_UPSTREAM_SPACES
     }
 COREDNS_ALLOW
         fi
@@ -190,20 +192,21 @@ fi
 
 # Default policy
 if [ "$DNS_DEFAULT" = "allow" ]; then
+    # Convert comma-separated upstream to space-separated for CoreDNS forward plugin
+    DNS_UPSTREAM_SPACES="${DNS_UPSTREAM//,/ }"
     cat >> /etc/coredns/Corefile <<COREDNS_DEFAULT
-    . {
-        forward . $DNS_UPSTREAM
-    }
+    forward . $DNS_UPSTREAM_SPACES
 COREDNS_DEFAULT
 else
     cat >> /etc/coredns/Corefile <<COREDNS_DEFAULT
-    . {
-        template IN ANY {
-            rcode NXDOMAIN
-        }
+    template IN ANY {
+        rcode NXDOMAIN
     }
 COREDNS_DEFAULT
 fi
+
+# Close the server block
+echo "}" >> /etc/coredns/Corefile
 
 echo "Generated CoreDNS config:"
 cat /etc/coredns/Corefile

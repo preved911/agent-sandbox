@@ -47,8 +47,26 @@ cat > /etc/nftables.conf <<NFTABLES_EOF
 
 flush ruleset
 
-# Main table for egress filtering
+# Main table for egress filtering and DNAT
 table ip firewall {
+NFTABLES_EOF
+
+# PREROUTING chain — DNAT for host→agent access
+if [ -n "${AGENT_IP:-}" ] && [ -n "${AGENT_PORT:-}" ]; then
+    # Strip /tcp suffix from port if present
+    AGENT_PORT_NUM=$(echo "$AGENT_PORT" | sed 's|/tcp||')
+    cat >> /etc/nftables.conf <<NFTABLES_DNAT_EOF
+    chain prerouting {
+        type nat hook prerouting priority -100;
+
+        # DNAT: forward published port traffic to agent
+        tcp dport $AGENT_PORT_NUM dnat to $AGENT_IP comment "dnat-agent"
+    }
+NFTABLES_DNAT_EOF
+fi
+
+cat >> /etc/nftables.conf <<NFTABLES_EOF
+
     chain forward {
         type filter hook forward priority 0; policy drop;
 
@@ -109,7 +127,7 @@ cat >> /etc/nftables.conf <<NFTABLES_EOF
         type nat hook postrouting priority 100;
 
         # SNAT outbound traffic from agent to internet
-        ip saddr 172.20.0.0/16 oifname "$OUTSIDE_IF" masquerade
+        ip saddr ${SUBNET:-10.0.0.0/8} oifname "$OUTSIDE_IF" masquerade
     }
 }
 
@@ -158,12 +176,14 @@ COREDNS_EOF
 # Add allow domains with forward rules
 if [ -n "${ALLOW_DOMAINS:-}" ]; then
     IFS=',' read -ra DOMAINS <<< "$ALLOW_DOMAINS"
+    # Convert comma-separated upstream to space-separated for CoreDNS forward plugin
+    DNS_UPSTREAM_SPACES="${DNS_UPSTREAM//,/ }"
     for domain in "${DOMAINS[@]}"; do
         domain=$(echo "$domain" | xargs)
         if [ -n "$domain" ]; then
             cat >> /etc/coredns/Corefile <<COREDNS_ALLOW
     $domain {
-        forward . $DNS_UPSTREAM
+        forward . $DNS_UPSTREAM_SPACES
     }
 COREDNS_ALLOW
         fi
@@ -172,20 +192,21 @@ fi
 
 # Default policy
 if [ "$DNS_DEFAULT" = "allow" ]; then
+    # Convert comma-separated upstream to space-separated for CoreDNS forward plugin
+    DNS_UPSTREAM_SPACES="${DNS_UPSTREAM//,/ }"
     cat >> /etc/coredns/Corefile <<COREDNS_DEFAULT
-    . {
-        forward . $DNS_UPSTREAM
-    }
+    forward . $DNS_UPSTREAM_SPACES
 COREDNS_DEFAULT
 else
     cat >> /etc/coredns/Corefile <<COREDNS_DEFAULT
-    . {
-        template IN ANY {
-            rcode NXDOMAIN
-        }
+    template IN ANY {
+        rcode NXDOMAIN
     }
 COREDNS_DEFAULT
 fi
+
+# Close the server block
+echo "}" >> /etc/coredns/Corefile
 
 echo "Generated CoreDNS config:"
 cat /etc/coredns/Corefile
