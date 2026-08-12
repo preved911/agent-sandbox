@@ -21,25 +21,16 @@ fi
 # INSIDE_IF: interface on the isolated subnet (agent side)
 # OUTSIDE_IF: interface on the default bridge (internet side)
 OUTSIDE_IF=$(ip route show default | awk '{print $5}' | head -1)
-INSIDE_IF=""
 
-# Match interface by first 3 octets of SUBNET (works for /24)
-SUBNET_PREFIX="${SUBNET%.*}"
-
-for iface in $(ip -o addr show | awk -F': ' '{print $2}' | grep -v lo); do
-    IFACE_IP=$(ip -o addr show "$iface" | grep 'inet ' | awk '{print $4}' | head -1 | cut -d/ -f1)
-    if [ -n "$IFACE_IP" ] && [ -n "$SUBNET_PREFIX" ]; then
-        IFACE_PREFIX="${IFACE_IP%.*}"
-        if [ "$IFACE_PREFIX" = "$SUBNET_PREFIX" ]; then
-            INSIDE_IF="$iface"
-            break
-        fi
-    fi
-done
+# Find the interface with a connected route for SUBNET (e.g. "10.130.214.0/24 dev eth1")
+INSIDE_IF=$(ip route show | grep "dev.*${SUBNET:-__none__}" | awk '{print $5}' | head -1)
 
 if [ -z "$INSIDE_IF" ] || [ -z "$OUTSIDE_IF" ]; then
     echo "ERROR: Could not detect network interfaces (subnet=${SUBNET:-unset})"
     echo "  Default route: $OUTSIDE_IF"
+    echo "  Routes:"
+    ip route show
+    echo "  Interfaces:"
     ip -o addr show
     exit 1
 fi
