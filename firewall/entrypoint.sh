@@ -103,18 +103,10 @@ table ip firewall {
 NFTABLES_EOF
 
 # PREROUTING chain — DNAT for host→agent access
-if [ -n "${AGENT_IP:-}" ] && [ -n "${AGENT_PORT:-}" ]; then
-    # Strip /tcp suffix from port if present
-    AGENT_PORT_NUM=$(echo "$AGENT_PORT" | sed 's|/tcp||')
-    cat >> /etc/nftables.conf <<NFTABLES_DNAT_EOF
-    chain prerouting {
-        type nat hook prerouting priority -100;
-
-        # DNAT: forward published port traffic to agent
-        tcp dport $AGENT_PORT_NUM dnat to $AGENT_IP comment "dnat-agent"
-    }
-NFTABLES_DNAT_EOF
-fi
+# NOTE: nftables DNAT does NOT work with Docker's user-space proxy (docker-proxy).
+# docker-proxy terminates the TCP connection before PREROUTING, so the DNAT rule
+# never sees the packet. Port forwarding is handled by socat instead (see bottom).
+# We keep the nftables DNAT as a fallback for non-Docker environments.
 
 cat >> /etc/nftables.conf <<NFTABLES_EOF
 
@@ -267,6 +259,18 @@ cat /etc/coredns/Corefile
 coredns -conf /etc/coredns/Corefile &
 COREDNS_PID=$!
 echo "CoreDNS started (PID=$COREDNS_PID)"
+
+# --- Start socat port forwarder ---
+# Docker's user-space proxy (docker-proxy) terminates TCP connections before
+# nftables PREROUTING, so DNAT rules never see the packets. socat listens on
+# the published port inside the firewall container and forwards to the agent.
+if [ -n "${AGENT_IP:-}" ] && [ -n "${AGENT_PORT:-}" ]; then
+    AGENT_PORT_NUM=$(echo "$AGENT_PORT" | sed 's|/tcp||')
+    echo "Starting socat: 0.0.0.0:${AGENT_PORT_NUM} -> ${AGENT_IP}:${AGENT_PORT_NUM}"
+    socat TCP-LISTEN:${AGENT_PORT_NUM},fork,reuseaddr,bind=0.0.0.0 TCP:${AGENT_IP}:${AGENT_PORT_NUM} &
+    SOCAT_PID=$!
+    echo "socat started (PID=$SOCAT_PID)"
+fi
 
 # --- Health check loop ---
 echo "Firewall ready. Monitoring..."

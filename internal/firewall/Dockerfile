@@ -5,6 +5,7 @@ RUN apk add --no-cache \
     coredns \
     iptables \
     bash \
+    socat \
     && rm -rf /var/cache/apk/*
 
 COPY entrypoint.sh /entrypoint.sh
