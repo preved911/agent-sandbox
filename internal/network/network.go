@@ -35,12 +35,19 @@ func Create(ctx context.Context, cli *client.Client, hash string) (networkID str
 		}
 	}
 
-	// Create isolated bridge network.
+	// Create isolated bridge network with fixed subnet.
 	// Internal = true means no default gateway to the host — traffic only
 	// flows through containers attached to this network.
+	// Subnet 172.20.0.0/16 is fixed so the gateway (172.20.0.1) and
+	// firewall (172.20.0.2) IPs are predictable.
 	resp, err := cli.NetworkCreate(ctx, name, network.CreateOptions{
-		Driver: "bridge",
+		Driver:   "bridge",
 		Internal: true,
+		IPAM: &network.IPAM{
+			Config: []network.IPAMConfig{
+				{Subnet: "172.20.0.0/16", Gateway: "172.20.0.1"},
+			},
+		},
 		Labels: map[string]string{
 			sandbox.Label:     "true",
 			sandbox.LabelName: name,
