@@ -2,12 +2,14 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/spf13/cobra"
 
 	"github.com/preved911/agent-sandbox/internal/build"
@@ -184,17 +186,21 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			// This ensures the command connects to the agent's port
 			// directly (localhost) rather than through the firewall's
 			// published port (which Docker's proxy intercepts).
-			// We use -i (interactive) without -t (no PTY allocation)
-			// because Go's exec pipes stdin/stdout as non-TTY — Docker's
-			// PTY allocation over pipes causes terminal escape corruption.
+			// We use creack/pty to allocate a host-side PTY and connect
+			// docker exec to the PTY slave — Docker sees a real terminal
+			// (proper size, raw mode, key handling). The user's terminal
+			// connects to the PTY master via io.Copy.
 			agentName := sandbox.ResourceName(hash, sandbox.SuffixAgent)
-			execArgs := append([]string{"exec", "-i", agentName}, args...)
+			execArgs := append([]string{"exec", "-it", agentName}, args...)
 
 			c := exec.CommandContext(ctx, "docker", execArgs...)
-			c.Stdin = os.Stdin
-			c.Stdout = os.Stdout
-			c.Stderr = os.Stderr
-			return c.Run()
+			f, err := pty.Start(c)
+			if err != nil {
+				return fmt.Errorf("attach: %w", err)
+			}
+			go io.Copy(f, os.Stdin)
+			io.Copy(os.Stdout, f)
+			return c.Wait()
 			}
 
 			// No attach command configured — print URL for manual connection.
