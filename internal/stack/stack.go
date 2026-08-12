@@ -269,9 +269,12 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 		Env:    envSlice,
 	}
 
-	// Firewall uses the isolated network with a fixed IP (not the gateway).
+	// Firewall must be on TWO networks:
+	// 1. Default bridge — for port publishing to the host (internal networks don't support port bindings)
+	// 2. Isolated network — for communication with the agent container
 	nConf := &dockernet.NetworkingConfig{
 		EndpointsConfig: map[string]*dockernet.EndpointSettings{
+			"bridge": {}, // default bridge for port publishing
 			networkName: {
 				IPAMConfig: &dockernet.EndpointIPAMConfig{
 					IPv4Address: "172.20.0.2",
