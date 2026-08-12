@@ -173,45 +173,32 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 
 			if cmdArgs != nil {
-				// Build the final args with URL substitution.
+				// Build the final args with localhost URL — the command runs
+				// inside the agent container via docker exec, so it connects
+				// to localhost:4096 where the agent service listens.
+				localURL := fmt.Sprintf("http://localhost:%s", port)
 				args := make([]string, len(cmdArgs))
 				for i, a := range cmdArgs {
-					args[i] = strings.ReplaceAll(a, "%s", url)
+					args[i] = strings.ReplaceAll(a, "%s", localURL)
 				}
-				fmt.Fprintf(out, "$ %s\n", strings.Join(args, " "))
 
-				// Retry attach with backoff — opencode server may accept TCP
-				// connections before its HTTP handler is fully initialized.
-				const maxAttempts = 5
-				for attempt := 1; attempt <= maxAttempts; attempt++ {
-					c := exec.CommandContext(ctx, args[0], args[1:]...)
-					f, err := pty.Start(c)
-					if err != nil {
-						if attempt < maxAttempts {
-							backoff := time.Duration(attempt) * 2 * time.Second
-							fmt.Fprintf(out, "Attach failed (attempt %d/%d), retrying in %v...\n", attempt, maxAttempts, backoff)
-							time.Sleep(backoff)
-							continue
-						}
-						return fmt.Errorf("attach command after %d attempts: %w", maxAttempts, err)
-					}
-					// Connect user's terminal to the PTY.
-					go io.Copy(f, os.Stdin)
-					io.Copy(os.Stdout, f)
-					waitErr := c.Wait()
-					f.Close()
-					if waitErr == nil {
-						return nil
-					}
-					// Attach process exited with error — retry.
-					if attempt < maxAttempts {
-						backoff := time.Duration(attempt) * 2 * time.Second
-						fmt.Fprintf(out, "Attach failed (attempt %d/%d), retrying in %v...\n", attempt, maxAttempts, backoff)
-						time.Sleep(backoff)
-						continue
-					}
-					return fmt.Errorf("attach command after %d attempts: %w", maxAttempts, waitErr)
+				// Run attach inside the agent container via docker exec.
+				// This ensures the command connects to the agent's port
+				// directly (localhost) rather than through the firewall's
+				// published port (which Docker's proxy intercepts).
+				agentName := sandbox.ResourceName(hash, sandbox.SuffixAgent)
+				execArgs := append([]string{"exec", "-it", agentName}, args...)
+				fmt.Fprintf(out, "$ docker %s\n", strings.Join(execArgs, " "))
+
+				c := exec.CommandContext(ctx, "docker", execArgs...)
+				f, err := pty.Start(c)
+				if err != nil {
+					return fmt.Errorf("attach: %w", err)
 				}
+				// Connect user's terminal to the PTY.
+				go io.Copy(f, os.Stdin)
+				io.Copy(os.Stdout, f)
+				return c.Wait()
 			}
 
 			// No attach command configured — print URL for manual connection.
