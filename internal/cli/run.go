@@ -100,6 +100,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 
 			s := stack.New(cli, hash, cwd, cfg)
+			out := cmd.OutOrStdout()
 
 			// Check if stack already exists.
 			exists, err := s.Exists(ctx)
@@ -109,6 +110,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 
 			if !exists {
 				// Sandbox doesn't exist — build, create, start.
+				fmt.Fprintln(out, "Creating new sandbox...")
 				var image string
 				switch {
 				case cfg.Build.Image != "":
@@ -116,18 +118,25 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				case noBuild:
 					image = cfg.Name + ":latest"
 				default:
+					fmt.Fprint(out, "Building image...")
 					image, err = build.ImageBuild(ctx, cfg, build.Options{Pull: pull})
 					if err != nil {
 						return err
 					}
+					fmt.Fprintln(out, " done")
 				}
 
+				fmt.Fprint(out, "Creating containers...")
 				if err := s.Create(ctx, image); err != nil {
 					return fmt.Errorf("create sandbox: %w", err)
 				}
+				fmt.Fprintln(out, " done")
+
+				fmt.Fprint(out, "Starting containers...")
 				if err := s.Start(ctx); err != nil {
 					return fmt.Errorf("start sandbox: %w", err)
 				}
+				fmt.Fprintln(out, " done")
 			} else {
 				// Sandbox exists — start if stopped.
 				status, err := s.Status(ctx)
@@ -135,9 +144,11 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 					return fmt.Errorf("sandbox status: %w", err)
 				}
 				if status.Agent != "running" {
+					fmt.Fprint(out, "Starting containers...")
 					if err := s.Start(ctx); err != nil {
 						return fmt.Errorf("start sandbox: %w", err)
 					}
+					fmt.Fprintln(out, " done")
 				}
 			}
 
@@ -154,7 +165,6 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 
 			url := fmt.Sprintf("http://%s:%s", bindIP, port)
-			out := cmd.OutOrStdout()
 
 			// Resolve the attach command (flag takes priority over config).
 			var cmdArgs []string
@@ -193,7 +203,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				}
 
 				// Wait for agent container to be ready (HTTP server must be listening).
-				fmt.Fprint(out, "Waiting for agent to be ready...")
+				fmt.Fprint(out, "Waiting for agent to be ready")
 				ready := false
 				for i := 0; i < 30; i++ {
 					pingCfg := container.ExecOptions{
@@ -202,16 +212,22 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 						AttachStderr: true,
 					}
 					pingResp, err := dockerCli.ContainerExecCreate(ctx, agentName, pingCfg)
-					if err == nil {
-						pingAttach, err := dockerCli.ContainerExecAttach(ctx, pingResp.ID, container.ExecStartOptions{})
-						if err == nil {
-							pingAttach.Close()
-							inspect, err := dockerCli.ContainerExecInspect(ctx, pingResp.ID)
-							if err == nil && inspect.ExitCode == 0 {
-								ready = true
-								break
-							}
-						}
+					if err != nil {
+						fmt.Fprint(out, ".")
+						time.Sleep(1 * time.Second)
+						continue
+					}
+					pingAttach, err := dockerCli.ContainerExecAttach(ctx, pingResp.ID, container.ExecStartOptions{})
+					if err != nil {
+						fmt.Fprint(out, ".")
+						time.Sleep(1 * time.Second)
+						continue
+					}
+					pingAttach.Close()
+					inspect, err := dockerCli.ContainerExecInspect(ctx, pingResp.ID)
+					if err == nil && inspect.ExitCode == 0 {
+						ready = true
+						break
 					}
 					fmt.Fprint(out, ".")
 					time.Sleep(1 * time.Second)
@@ -224,6 +240,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 					}
 					return fmt.Errorf("timeout waiting for agent container to be ready")
 				}
+				fmt.Fprintln(out, "Agent is ready.")
 
 				execCfg := container.ExecOptions{
 					AttachStdin:  true,
