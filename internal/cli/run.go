@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -185,8 +187,16 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				return fmt.Errorf("exec create: %w", err)
 			}
 
+			// Get current terminal size for initial PTY dimensions.
+			w, h, err := term.GetSize(int(os.Stdin.Fd()))
+			if err != nil {
+				w, h = 80, 24 // fallback
+			}
+			consoleSize := [2]uint{uint(h), uint(w)}
+
 			attachResp, err := dockerCli.ContainerExecAttach(ctx, resp.ID, container.ExecStartOptions{
-				Tty: true,
+				Tty:         true,
+				ConsoleSize: &consoleSize,
 			})
 			if err != nil {
 				return fmt.Errorf("exec attach: %w", err)
@@ -200,9 +210,26 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 			defer term.Restore(int(os.Stdin.Fd()), oldState)
 
+			// Propagate terminal resize events to the container PTY.
+			sig := make(chan os.Signal, 1)
+			signal.Notify(sig, syscall.SIGWINCH)
+			go func() {
+				for range sig {
+					if nw, nh, err := term.GetSize(int(os.Stdin.Fd())); err == nil {
+						dockerCli.ContainerExecResize(ctx, resp.ID, container.ResizeOptions{
+							Width:  uint(nw),
+							Height: uint(nh),
+						})
+					}
+				}
+			}()
+			// Trigger initial resize.
+			sig <- syscall.SIGWINCH
+
 			// Bidirectional copy: user terminal ↔ Docker exec stream.
 			go io.Copy(attachResp.Conn, os.Stdin)
 			io.Copy(os.Stdout, attachResp.Reader)
+			signal.Stop(sig)
 
 			// Wait for exec to finish.
 			for {
