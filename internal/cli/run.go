@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -108,7 +109,11 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				return fmt.Errorf("check sandbox: %w", err)
 			}
 
-			if !exists {
+			// Track whether we just created/started containers (need readiness check)
+			// vs reused existing running containers (skip readiness check).
+			needsReadinessCheck := false
+
+		if !exists {
 				// Sandbox doesn't exist — build, create, start.
 				fmt.Fprintln(out, "Creating new sandbox...")
 				var image string
@@ -137,6 +142,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 					return fmt.Errorf("start sandbox: %w", err)
 				}
 				fmt.Fprintln(out, " done")
+				needsReadinessCheck = true
 			} else {
 				// Sandbox exists — start if stopped.
 				status, err := s.Status(ctx)
@@ -149,7 +155,9 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 						return fmt.Errorf("start sandbox: %w", err)
 					}
 					fmt.Fprintln(out, " done")
+					needsReadinessCheck = true
 				}
+				// If already running, agent is already listening — skip readiness check.
 			}
 
 			// Get the published port from the firewall container.
@@ -187,6 +195,20 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 
 			agentName := sandbox.ResourceName(hash, sandbox.SuffixAgent)
 
+			// Acquire a lock file to prevent concurrent attaches to the same sandbox.
+			lockPath := filepath.Join(os.TempDir(), fmt.Sprintf("agent-sandbox-%s.lock", hash))
+			lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+			if err != nil {
+				return fmt.Errorf("open lock file: %w", err)
+			}
+			defer lockFile.Close()
+
+			// Try to acquire the lock (non-blocking). If locked, another instance is attaching.
+			if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+				return fmt.Errorf("sandbox is already in use by another process")
+			}
+			defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+
 			dockerCli, err := docker.NewClient("")
 			if err != nil {
 				return fmt.Errorf("docker client: %w", err)
@@ -202,45 +224,48 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 					time.Sleep(2 * time.Second)
 				}
 
-				// Wait for agent container to be ready (HTTP server must be listening).
-				fmt.Fprint(out, "Waiting for agent to be ready")
-				ready := false
-				for i := 0; i < 30; i++ {
-					pingCfg := container.ExecOptions{
-						Cmd:          []string{"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--connect-timeout", "1", "http://localhost:4096"},
-						AttachStdout: true,
-						AttachStderr: true,
-					}
-					pingResp, err := dockerCli.ContainerExecCreate(ctx, agentName, pingCfg)
-					if err != nil {
+				// Wait for agent container to be ready — only if we just created/started.
+				// If containers were already running, the agent is already listening.
+				if needsReadinessCheck {
+					fmt.Fprint(out, "Waiting for agent to be ready")
+					ready := false
+					for i := 0; i < 30; i++ {
+						pingCfg := container.ExecOptions{
+							Cmd:          []string{"curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--connect-timeout", "1", "http://localhost:4096"},
+							AttachStdout: true,
+							AttachStderr: true,
+						}
+						pingResp, err := dockerCli.ContainerExecCreate(ctx, agentName, pingCfg)
+						if err != nil {
+							fmt.Fprint(out, ".")
+							time.Sleep(1 * time.Second)
+							continue
+						}
+						pingAttach, err := dockerCli.ContainerExecAttach(ctx, pingResp.ID, container.ExecStartOptions{})
+						if err != nil {
+							fmt.Fprint(out, ".")
+							time.Sleep(1 * time.Second)
+							continue
+						}
+						pingAttach.Close()
+						inspect, err := dockerCli.ContainerExecInspect(ctx, pingResp.ID)
+						if err == nil && inspect.ExitCode == 0 {
+							ready = true
+							break
+						}
 						fmt.Fprint(out, ".")
 						time.Sleep(1 * time.Second)
-						continue
 					}
-					pingAttach, err := dockerCli.ContainerExecAttach(ctx, pingResp.ID, container.ExecStartOptions{})
-					if err != nil {
-						fmt.Fprint(out, ".")
-						time.Sleep(1 * time.Second)
-						continue
+					fmt.Fprintln(out)
+					if !ready {
+						if attempt < maxRetries {
+							fmt.Fprintln(out, "Agent not ready, retrying...")
+							goto retry
+						}
+						return fmt.Errorf("timeout waiting for agent container to be ready")
 					}
-					pingAttach.Close()
-					inspect, err := dockerCli.ContainerExecInspect(ctx, pingResp.ID)
-					if err == nil && inspect.ExitCode == 0 {
-						ready = true
-						break
-					}
-					fmt.Fprint(out, ".")
-					time.Sleep(1 * time.Second)
+					fmt.Fprintln(out, "Agent is ready.")
 				}
-				fmt.Fprintln(out)
-				if !ready {
-					if attempt < maxRetries {
-						fmt.Fprintln(out, "Agent not ready, retrying...")
-						goto retry
-					}
-					return fmt.Errorf("timeout waiting for agent container to be ready")
-				}
-				fmt.Fprintln(out, "Agent is ready.")
 
 				execCfg := container.ExecOptions{
 					AttachStdin:  true,
