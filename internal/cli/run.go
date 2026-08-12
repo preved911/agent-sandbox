@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,7 +13,6 @@ import (
 	"github.com/preved911/agent-sandbox/internal/docker"
 	"github.com/preved911/agent-sandbox/internal/paths"
 	"github.com/preved911/agent-sandbox/internal/preflight"
-	"github.com/preved911/agent-sandbox/internal/proxy"
 	"github.com/preved911/agent-sandbox/internal/sandbox"
 	"github.com/preved911/agent-sandbox/internal/stack"
 )
@@ -123,18 +121,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				}
 			}
 
-			// Start reverse forwarding proxies.
-			gateway, err := s.GetGatewayIP(ctx)
-			if err != nil {
-				return fmt.Errorf("get gateway IP: %w", err)
-			}
-			pm := proxy.NewManager()
-			if err := pm.StartProxies(ctx, gateway, &cfg.Run.ReverseForward); err != nil {
-				log.Printf("Warning: start proxies: %v", err)
-			}
-			defer pm.StopAll()
-
-			// Get the published port.
+			// Get the published port from the firewall container.
 			port, err := s.GetPort(ctx)
 			if err != nil {
 				return fmt.Errorf("get port: %w", err)

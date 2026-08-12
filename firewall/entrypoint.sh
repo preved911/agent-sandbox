@@ -47,8 +47,26 @@ cat > /etc/nftables.conf <<NFTABLES_EOF
 
 flush ruleset
 
-# Main table for egress filtering
+# Main table for egress filtering and DNAT
 table ip firewall {
+NFTABLES_EOF
+
+# PREROUTING chain — DNAT for host→agent access
+if [ -n "${AGENT_IP:-}" ] && [ -n "${AGENT_PORT:-}" ]; then
+    # Strip /tcp suffix from port if present
+    AGENT_PORT_NUM=$(echo "$AGENT_PORT" | sed 's|/tcp||')
+    cat >> /etc/nftables.conf <<NFTABLES_DNAT_EOF
+    chain prerouting {
+        type nat hook prerouting priority -100;
+
+        # DNAT: forward published port traffic to agent
+        tcp dport $AGENT_PORT_NUM dnat to $AGENT_IP comment "dnat-agent"
+    }
+NFTABLES_DNAT_EOF
+fi
+
+cat >> /etc/nftables.conf <<NFTABLES_EOF
+
     chain forward {
         type filter hook forward priority 0; policy drop;
 

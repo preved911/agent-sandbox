@@ -7,41 +7,28 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
+	dockernet "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
 
 	"github.com/preved911/agent-sandbox/internal/config"
 	"github.com/preved911/agent-sandbox/internal/paths"
 	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
-// Result describes a successfully started sandbox.
-type Result struct {
-	ContainerID string
-	Name        string
-	HostPort    int
-	Binds       []string // resolved bind specs (source:target[:ro]) passed to the daemon
-	Volume      string   // named Docker volume used for session persistence
-}
+// AgentIP is the fixed IP for the agent container on the isolated network.
+// The firewall DNAT rule forwards published port traffic to this IP.
+const AgentIP = "172.20.0.10"
 
 // Create creates a container named name running image without starting it.
-// The container is created on the specified network (if any) and can be started later.
-// gateway is the Docker bridge gateway IP for host-side proxy goroutines.
-func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, hash, gateway string) error {
-	containerPort := nat.Port(cfg.Run.Port.Container)
-
-	envSlice := make([]string, 0, len(cfg.Run.Env)+1)
+// The container is created on the isolated network with a fixed IP.
+func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, hash string) error {
+	envSlice := make([]string, 0, len(cfg.Run.Env))
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
-	}
-	if gateway != "" {
-		envSlice = append(envSlice, "SANDBOX_GATEWAY="+gateway)
 	}
 
 	binds, otherMounts, err := buildMounts(cfg)
@@ -59,40 +46,40 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 		})
 	}
 
-	bindIP := cfg.Run.Port.Bind
-	if bindIP == "" {
-		bindIP = "127.0.0.1"
-	}
-
 	name := sandbox.ResourceName(hash, sandbox.SuffixAgent)
 	labels := sandbox.DefaultLabels(hash, "", "")
 
 	cConf := &container.Config{
-		Image:        image,
-		Entrypoint:   cfg.Run.Entrypoint,
-		Cmd:          cfg.Run.Command,
-		Env:          envSlice,
-		WorkingDir:   cfg.Run.Workdir,
-		User:         cfg.Run.User,
-		ExposedPorts: nat.PortSet{containerPort: struct{}{}},
-		Labels:       labels,
+		Image:      image,
+		Entrypoint: cfg.Run.Entrypoint,
+		Cmd:        cfg.Run.Command,
+		Env:        envSlice,
+		WorkingDir: cfg.Run.Workdir,
+		User:       cfg.Run.User,
+		Labels:     labels,
 	}
+
 	hConf := &container.HostConfig{
 		Binds:  binds,
 		Mounts: otherMounts,
-		PortBindings: nat.PortMap{
-			containerPort: []nat.PortBinding{{HostIP: bindIP, HostPort: "0"}},
+		RestartPolicy: container.RestartPolicy{
+			Name: container.RestartPolicyUnlessStopped,
 		},
-		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 		// DNS points to the firewall container so all DNS queries are filtered by CoreDNS.
 		DNS: []string{"172.20.0.2"},
 	}
 
-	// Network config — join isolated network if specified
-	nConf := &network.NetworkingConfig{}
+	// Create on the isolated network with a fixed IP.
+	// No port publishing — traffic reaches the agent via firewall DNAT.
 	networkName := sandbox.ResourceName(hash, sandbox.SuffixNet)
-	nConf.EndpointsConfig = map[string]*network.EndpointSettings{
-		networkName: {},
+	nConf := &dockernet.NetworkingConfig{
+		EndpointsConfig: map[string]*dockernet.EndpointSettings{
+			networkName: {
+				IPAMConfig: &dockernet.EndpointIPAMConfig{
+					IPv4Address: AgentIP,
+				},
+			},
+		},
 	}
 
 	_, err = cli.ContainerCreate(ctx, cConf, hConf, nConf, nil, name)
@@ -104,23 +91,14 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 }
 
 // Start creates and starts a container named name running image.
-// gateway is the Docker bridge gateway IP for host-side proxy goroutines.
-func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, name, gateway string) (*Result, error) {
-	containerPort := nat.Port(cfg.Run.Port.Container)
-
-	envSlice := make([]string, 0, len(cfg.Run.Env)+1)
+// This function is retained for direct use; the stack orchestrator calls
+// ContainerStart directly instead.
+func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, name, hash string) (*Result, error) {
+	envSlice := make([]string, 0, len(cfg.Run.Env))
 	for k, v := range cfg.Run.Env {
 		envSlice = append(envSlice, k+"="+v)
 	}
-	if gateway != "" {
-		envSlice = append(envSlice, "SANDBOX_GATEWAY="+gateway)
-	}
 
-	// Bind mounts use HostConfig.Binds (the "source:target[:ro]" string form
-	// used by `docker run -v`) so that Docker Desktop's VirtioFS / gRPC-FUSE
-	// path-translation layer is triggered. The structured Mounts field bypasses
-	// that layer and causes "path does not exist" on macOS.
-	// Non-bind mounts (volume, tmpfs) continue to use HostConfig.Mounts.
 	binds, otherMounts, err := buildMounts(cfg)
 	if err != nil {
 		return nil, err
@@ -136,36 +114,41 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 		})
 	}
 
-	bindIP := cfg.Run.Port.Bind
-	if bindIP == "" {
-		bindIP = "127.0.0.1"
-	}
-
 	cConf := &container.Config{
-		Image:        image,
-		Entrypoint:   cfg.Run.Entrypoint,
-		Cmd:          cfg.Run.Command,
-		Env:          envSlice,
-		WorkingDir:   cfg.Run.Workdir,
-		User:         cfg.Run.User,
-		ExposedPorts: nat.PortSet{containerPort: struct{}{}},
+		Image:      image,
+		Entrypoint: cfg.Run.Entrypoint,
+		Cmd:        cfg.Run.Command,
+		Env:        envSlice,
+		WorkingDir: cfg.Run.Workdir,
+		User:       cfg.Run.User,
 		Labels: map[string]string{
 			sandbox.Label:     "true",
 			sandbox.LabelName: name,
 		},
 	}
+
 	hConf := &container.HostConfig{
 		Binds:  binds,
 		Mounts: otherMounts,
-		PortBindings: nat.PortMap{
-			containerPort: []nat.PortBinding{{HostIP: bindIP, HostPort: "0"}},
+		RestartPolicy: container.RestartPolicy{
+			Name: container.RestartPolicyUnlessStopped,
 		},
-		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
-		// DNS points to the firewall container so all DNS queries are filtered by CoreDNS.
 		DNS: []string{"172.20.0.2"},
 	}
 
-	created, err := cli.ContainerCreate(ctx, cConf, hConf, nil, nil, name)
+	// Create on the isolated network with a fixed IP.
+	networkName := sandbox.ResourceName(hash, sandbox.SuffixNet)
+	nConf := &dockernet.NetworkingConfig{
+		EndpointsConfig: map[string]*dockernet.EndpointSettings{
+			networkName: {
+				IPAMConfig: &dockernet.EndpointIPAMConfig{
+					IPv4Address: AgentIP,
+				},
+			},
+		},
+	}
+
+	created, err := cli.ContainerCreate(ctx, cConf, hConf, nConf, nil, name)
 	if err != nil {
 		return nil, fmt.Errorf("create container: %w", err)
 	}
@@ -174,32 +157,27 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 		return nil, fmt.Errorf("start container: %w", err)
 	}
 
+	// Use the actual name assigned by Docker (strips the leading "/").
 	inspect, err := cli.ContainerInspect(ctx, created.ID)
 	if err != nil {
 		return nil, fmt.Errorf("inspect container: %w", err)
 	}
-	if inspect.NetworkSettings == nil {
-		return nil, fmt.Errorf("container has no network settings yet")
-	}
-	bindings := inspect.NetworkSettings.Ports[containerPort]
-	if len(bindings) == 0 || bindings[0].HostPort == "" {
-		return nil, fmt.Errorf("container did not publish %s", containerPort)
-	}
-	port, err := strconv.Atoi(bindings[0].HostPort)
-	if err != nil {
-		return nil, fmt.Errorf("parse host port %q: %w", bindings[0].HostPort, err)
-	}
-
-	// Use the actual name assigned by Docker (strips the leading "/").
 	actualName := strings.TrimPrefix(inspect.Name, "/")
 
 	return &Result{
 		ContainerID: created.ID,
 		Name:        actualName,
-		HostPort:    port,
 		Binds:       binds,
 		Volume:      strings.TrimSuffix(name, sandbox.SuffixAgent) + sandbox.SuffixSessions,
 	}, nil
+}
+
+// Result describes a successfully started sandbox.
+type Result struct {
+	ContainerID string
+	Name        string
+	Binds       []string // resolved bind specs (source:target[:ro]) passed to the daemon
+	Volume      string   // named Docker volume used for session persistence
 }
 
 // buildMounts splits config mounts into bind strings (HostConfig.Binds) and

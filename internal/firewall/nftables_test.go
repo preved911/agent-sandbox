@@ -16,7 +16,7 @@ func TestGenerateNftablesConfig_DenyBeforeAllow(t *testing.T) {
 		},
 	}
 
-	cfg := GenerateNftablesConfig(network, "eth0")
+	cfg := GenerateNftablesConfig(network, "eth0", nil)
 
 	// Deny rules must appear before allow rules
 	denyIdx := strings.Index(cfg, "ip daddr 10.0.0.0/24 drop")
@@ -38,7 +38,7 @@ func TestGenerateNftablesConfig_DefaultDeny(t *testing.T) {
 		Default: "deny",
 	}
 
-	cfg := GenerateNftablesConfig(network, "eth0")
+	cfg := GenerateNftablesConfig(network, "eth0", nil)
 
 	if !strings.Contains(cfg, "drop comment \"default-deny\"") {
 		t.Error("expected default-deny policy")
@@ -50,7 +50,7 @@ func TestGenerateNftablesConfig_DefaultAllow(t *testing.T) {
 		Default: "allow",
 	}
 
-	cfg := GenerateNftablesConfig(network, "eth0")
+	cfg := GenerateNftablesConfig(network, "eth0", nil)
 
 	if !strings.Contains(cfg, "accept comment \"default-allow\"") {
 		t.Error("expected default-allow policy")
@@ -58,7 +58,7 @@ func TestGenerateNftablesConfig_DefaultAllow(t *testing.T) {
 }
 
 func TestGenerateNftablesConfig_SNAT(t *testing.T) {
-	cfg := GenerateNftablesConfig(nil, "eth1")
+	cfg := GenerateNftablesConfig(nil, "eth1", nil)
 
 	if !strings.Contains(cfg, "ip saddr 172.20.0.0/16") {
 		t.Error("expected SNAT rule for agent subnet")
@@ -69,7 +69,7 @@ func TestGenerateNftablesConfig_SNAT(t *testing.T) {
 }
 
 func TestGenerateNftablesConfig_Established(t *testing.T) {
-	cfg := GenerateNftablesConfig(nil, "eth0")
+	cfg := GenerateNftablesConfig(nil, "eth0", nil)
 
 	if !strings.Contains(cfg, "ct state established,related accept") {
 		t.Error("expected established/related rule")
@@ -79,22 +79,47 @@ func TestGenerateNftablesConfig_Established(t *testing.T) {
 	}
 }
 
+func TestGenerateNftablesConfig_DNAT(t *testing.T) {
+	dnat := &DNATConfig{
+		AgentIP:   "172.20.0.10",
+		AgentPort: "4096/tcp",
+	}
+
+	cfg := GenerateNftablesConfig(nil, "eth0", dnat)
+
+	if !strings.Contains(cfg, "prerouting") {
+		t.Error("expected prerouting chain")
+	}
+	if !strings.Contains(cfg, "tcp dport 4096 dnat to 172.20.0.10") {
+		t.Error("expected DNAT rule for agent")
+	}
+	if !strings.Contains(cfg, "dnat-agent") {
+		t.Error("expected dnat-agent comment")
+	}
+}
+
+func TestGenerateNftablesConfig_NoDNAT(t *testing.T) {
+	cfg := GenerateNftablesConfig(nil, "eth0", nil)
+
+	if strings.Contains(cfg, "prerouting") {
+		t.Error("should not have prerouting chain when dnat is nil")
+	}
+}
+
 func TestGenerateNftablesConfigWithReverse(t *testing.T) {
 	network := &config.NetworkConfig{Default: "deny"}
-	reverse := &config.ReverseForwardConfig{
-		Ports: []config.PortForward{
-			{Host: 3000, Container: 3000},
-			{Host: 8080, Container: 80},
-		},
+	dnat := &DNATConfig{
+		AgentIP:   "172.20.0.10",
+		AgentPort: "4096/tcp",
 	}
 
-	cfg := GenerateNftablesConfigWithReverse(network, reverse, "eth0")
+	cfg := GenerateNftablesConfigWithReverse(network, dnat, "eth0")
 
-	if !strings.Contains(cfg, "host:3000 -> container:3000") {
-		t.Error("expected reverse forward comment for port 3000")
+	if !strings.Contains(cfg, "dnat to 172.20.0.10") {
+		t.Error("expected DNAT rule in combined config")
 	}
-	if !strings.Contains(cfg, "host:8080 -> container:80") {
-		t.Error("expected reverse forward comment for port 8080")
+	if !strings.Contains(cfg, "drop comment \"default-deny\"") {
+		t.Error("expected default-deny policy in combined config")
 	}
 }
 

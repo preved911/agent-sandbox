@@ -9,15 +9,32 @@ import (
 	"github.com/preved911/agent-sandbox/internal/config"
 )
 
+// DNATConfig holds the DNAT target for host→agent forwarding.
+type DNATConfig struct {
+	AgentIP   string // fixed IP of the agent on the isolated network
+	AgentPort string // container port to forward (e.g. "4096/tcp")
+}
+
 // GenerateNftablesConfig generates an nftables configuration from network rules.
 // Deny rules are emitted BEFORE allow rules (deny wins).
+// If dnat is non-nil, a PREROUTING DNAT rule is added to forward traffic to the agent.
 // Returns the full nftables config as a string.
-func GenerateNftablesConfig(network *config.NetworkConfig, outsideIF string) string {
+func GenerateNftablesConfig(network *config.NetworkConfig, outsideIF string, dnat *DNATConfig) string {
 	var b strings.Builder
 
 	b.WriteString("#!/usr/sbin/nft -f\n\n")
 	b.WriteString("flush ruleset\n\n")
 	b.WriteString("table ip firewall {\n")
+
+	// PREROUTING chain — DNAT for host→agent access
+	if dnat != nil && dnat.AgentIP != "" && dnat.AgentPort != "" {
+		b.WriteString("    chain prerouting {\n")
+		b.WriteString("        type nat hook prerouting priority -100;\n\n")
+		b.WriteString("        # DNAT: forward published port traffic to agent\n")
+		b.WriteString(fmt.Sprintf("        tcp dport %s dnat to %s comment \"dnat-agent\"\n",
+			strings.TrimSuffix(dnat.AgentPort, "/tcp"), dnat.AgentIP))
+		b.WriteString("    }\n\n")
+	}
 
 	// FORWARD chain — egress filtering
 	b.WriteString("    chain forward {\n")
@@ -81,24 +98,9 @@ func GenerateNftablesConfig(network *config.NetworkConfig, outsideIF string) str
 	return b.String()
 }
 
-// GenerateNftablesConfigWithReverse generates nftables config with reverse forwarding rules.
-func GenerateNftablesConfigWithReverse(network *config.NetworkConfig, reverseForward *config.ReverseForwardConfig, outsideIF string) string {
-	config := GenerateNftablesConfig(network, outsideIF)
-
-	if reverseForward == nil || len(reverseForward.Ports) == 0 {
-		return config
-	}
-
-	var b strings.Builder
-	b.WriteString(config)
-	b.WriteString("\n# Reverse forwarding rules\n")
-
-	for _, port := range reverseForward.Ports {
-		b.WriteString(fmt.Sprintf("# Reverse forward: host:%d -> container:%d (socat handles forwarding)\n",
-			port.Host, port.Container))
-	}
-
-	return b.String()
+// GenerateNftablesConfigWithReverse generates nftables config with DNAT rules for host→agent access.
+func GenerateNftablesConfigWithReverse(network *config.NetworkConfig, dnat *DNATConfig, outsideIF string) string {
+	return GenerateNftablesConfig(network, outsideIF, dnat)
 }
 
 // ValidateCIDRRules checks for conflicts between allow and deny CIDR lists.

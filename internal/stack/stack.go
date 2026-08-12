@@ -41,8 +41,8 @@ func New(cli *client.Client, hash string, cfg *config.Config) *Stack {
 // Lifecycle:
 // 1. Create sessions volume (if not exists)
 // 2. Create isolated network
-// 3. Create firewall container
-// 4. Create agent container
+// 3. Create firewall container (with published port for host access)
+// 4. Create agent container (on isolated network only)
 func (s *Stack) Create(ctx context.Context, image string) error {
 	// 1. Sessions volume — created automatically by Docker on first use
 	volumeName := sandbox.ResourceName(s.hash, sandbox.SuffixSessions)
@@ -54,22 +54,16 @@ func (s *Stack) Create(ctx context.Context, image string) error {
 		return fmt.Errorf("create network: %w", err)
 	}
 
-	// 3. Get gateway IP (reserved for host-side proxy goroutines)
-	gateway, err := sandboxnet.GatewayIP(ctx, s.cli, s.hash)
-	if err != nil {
-		return fmt.Errorf("get gateway IP: %w", err)
-	}
-	log.Printf("Gateway IP: %s (reserved for host-side proxy)", gateway)
-
-	// 4. Create firewall container
+	// 3. Create firewall container (with published port for host→agent access)
 	log.Printf("Creating firewall container...")
 	if err := s.createFirewall(ctx); err != nil {
 		return fmt.Errorf("create firewall: %w", err)
 	}
 
-	// 5. Create agent container
+	// 4. Create agent container on the isolated network with a fixed IP.
+	// No port publishing — traffic reaches the agent via firewall DNAT.
 	log.Printf("Creating agent container...")
-	if err := run.Create(ctx, s.cli, s.config, image, s.hash, gateway); err != nil {
+	if err := run.Create(ctx, s.cli, s.config, image, s.hash); err != nil {
 		return fmt.Errorf("create agent: %w", err)
 	}
 
@@ -160,14 +154,16 @@ func (s *Stack) Remove(ctx context.Context, force bool, purge bool) error {
 	return nil
 }
 
-// GetPort returns the published port for the agent container.
+// GetPort returns the published port for the firewall container.
+// The firewall's published port is used for host→agent access via nftables DNAT.
 func (s *Stack) GetPort(ctx context.Context) (string, error) {
-	agentName := sandbox.ResourceName(s.hash, sandbox.SuffixAgent)
-	resp, err := s.cli.ContainerInspect(ctx, agentName)
+	fwName := sandbox.ResourceName(s.hash, sandbox.SuffixFirewall)
+	resp, err := s.cli.ContainerInspect(ctx, fwName)
 	if err != nil {
-		return "", fmt.Errorf("inspect agent: %w", err)
+		return "", fmt.Errorf("inspect firewall: %w", err)
 	}
 
+	// The firewall publishes the agent's container port (e.g., 4096/tcp).
 	portKey := nat.Port(s.config.Run.Port.Container)
 	if ports, ok := resp.NetworkSettings.Ports[portKey]; ok && len(ports) > 0 {
 		return ports[0].HostPort, nil
@@ -240,11 +236,9 @@ type StackStatus struct {
 	Network  string
 }
 
-// GetGatewayIP returns the Docker bridge gateway IP for this stack.
-// The gateway IP (172.20.0.1) is used by host-side proxy goroutines.
-func (s *Stack) GetGatewayIP(ctx context.Context) (string, error) {
-	return sandboxnet.GatewayIP(ctx, s.cli, s.hash)
-}
+// agentIP is the fixed IP for the agent container on the isolated network.
+// The firewall DNAT rule forwards published port traffic to this IP.
+const agentIP = "172.20.0.10"
 
 func (s *Stack) createFirewall(ctx context.Context) error {
 	fwName := sandbox.ResourceName(s.hash, sandbox.SuffixFirewall)
@@ -260,6 +254,12 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 	fw := firewall.NewFirewallContainer(s.cli, s.hash)
 	envSlice := fw.FirewallEnv(&s.config.Firewall.Network)
 
+	// Add DNAT target IP so firewall entrypoint can generate the rule.
+	envSlice = append(envSlice, "AGENT_IP="+agentIP)
+
+	// Add the agent's container port so firewall knows which port to DNAT.
+	envSlice = append(envSlice, "AGENT_PORT="+s.config.Run.Port.Container)
+
 	labels := sandbox.DefaultLabels(s.hash, "", "")
 	labels[sandbox.SandboxRole] = "firewall"
 
@@ -270,7 +270,6 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 	}
 
 	// Firewall uses the isolated network with a fixed IP (not the gateway).
-	// The gateway IP (172.20.0.1) is reserved for host-side proxy goroutines.
 	nConf := &dockernet.NetworkingConfig{
 		EndpointsConfig: map[string]*dockernet.EndpointSettings{
 			networkName: {
@@ -283,8 +282,20 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 
 	capAdd := []string{"NET_ADMIN", "NET_RAW"}
 
+	// Publish the agent's container port on the firewall.
+	// Host binds to 127.0.0.1:random, container listens on agent_port.
+	// Traffic flows: host → firewall:agent_port → nftables DNAT → agent:agent_port
+	containerPort := nat.Port(s.config.Run.Port.Container)
+	bindIP := s.config.Run.Port.Bind
+	if bindIP == "" {
+		bindIP = "127.0.0.1"
+	}
+
 	hConf := &container.HostConfig{
 		CapAdd: capAdd,
+		PortBindings: nat.PortMap{
+			containerPort: []nat.PortBinding{{HostIP: bindIP, HostPort: "0"}},
+		},
 		RestartPolicy: container.RestartPolicy{
 			Name: container.RestartPolicyUnlessStopped,
 		},
