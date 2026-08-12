@@ -25,8 +25,8 @@ func TestSubnetFromHash(t *testing.T) {
 	if subnet != "10.161.178.0/24" {
 		t.Errorf("subnet: got %q, want 10.161.178.0/24", subnet)
 	}
-	if gw != "10.161.178.2" {
-		t.Errorf("gateway: got %q, want 10.161.178.2 (same as firewall)", gw)
+	if gw != "10.161.178.1" {
+		t.Errorf("gateway: got %q, want 10.161.178.1 (secondary IP on firewall)", gw)
 	}
 	if fw != "10.161.178.2" {
 		t.Errorf("firewall IP: got %q, want 10.161.178.2", fw)

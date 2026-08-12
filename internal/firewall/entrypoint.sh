@@ -68,6 +68,30 @@ fi
 
 echo "Inside IP (agent gateway): $INSIDE_IP"
 
+# --- Add gateway as secondary IP ---
+# The network gateway (10.x.x.1) is the agent's default route.
+# Docker can't assign the gateway IP to a container, so we add it as a
+# secondary IP on the firewall's inside interface. This makes the firewall
+# respond to ARP for the gateway IP, so agent traffic routes through it.
+if [ -n "${GATEWAY:-}" ] && [ -n "${INSIDE_IP:-}" ]; then
+    # Find the inside interface by matching the primary IP
+    INSIDE_IF=""
+    for iface in $(ip -o addr show | awk '{print $2}' | grep -v '^lo$' | sort -u); do
+        iface_ip=$(ip -o addr show dev "$iface" 2>/dev/null | awk '/inet /{print $4}' | head -1 | cut -d/ -f1)
+        if [ "$iface_ip" = "$INSIDE_IP" ]; then
+            INSIDE_IF="$iface"
+            break
+        fi
+    done
+    if [ -n "$INSIDE_IF" ]; then
+        # Add /24 from SUBNET if available, otherwise use /24
+        MASK="${SUBNET##*/}"
+        ip addr add "${GATEWAY}/${MASK:-24}" dev "$INSIDE_IF" 2>/dev/null || \
+            echo "WARN: could not add gateway ${GATEWAY} on ${INSIDE_IF} (may already exist)" >&2
+        echo "Added gateway ${GATEWAY}/${MASK:-24} on ${INSIDE_IF}"
+    fi
+fi
+
 # --- Generate nftables config ---
 cat > /etc/nftables.conf <<NFTABLES_EOF
 #!/usr/sbin/nft -f

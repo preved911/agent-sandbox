@@ -16,16 +16,15 @@ import (
 
 // SubnetFromHash derives a unique /24 subnet from the sandbox hash.
 // Returns subnet, gateway, firewall IP, and agent IP.
-// The gateway IS the firewall IP — agent traffic routes through the firewall.
+// Gateway is 10.x.x.1 (will be added as secondary IP on the firewall).
+// Firewall primary IP is 10.x.x.2.
 // Uses the first 4 hex chars of the hash as two octets in the 10.x.x.0/24 range,
 // giving 65536 possible unique subnets per sandbox.
 func SubnetFromHash(hash string) (subnet, gateway, firewallIP, agentIP string) {
 	b1, _ := strconv.ParseInt(hash[0:2], 16, 64)
 	b2, _ := strconv.ParseInt(hash[2:4], 16, 64)
 	prefix := fmt.Sprintf("10.%d.%d", b1, b2)
-	firewallIP = prefix + ".2"
-	// Gateway = firewall IP so agent traffic routes through the firewall.
-	return prefix + ".0/24", firewallIP, firewallIP, prefix + ".10"
+	return prefix + ".0/24", prefix + ".1", prefix + ".2", prefix + ".10"
 }
 
 // Create creates an isolated Docker bridge network for the sandbox.

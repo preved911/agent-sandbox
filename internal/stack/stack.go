@@ -264,8 +264,12 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 	envSlice = append(envSlice, "AGENT_PORT="+s.config.Run.Port.Container)
 
 	// Add subnet for SNAT rule.
-	subnet, _, _, _ := sandboxnet.SubnetFromHash(s.hash)
+	subnet, gateway, _, _ := sandboxnet.SubnetFromHash(s.hash)
 	envSlice = append(envSlice, "SUBNET="+subnet)
+
+	// Add gateway IP so firewall can add it as secondary IP on inside interface.
+	// Agent's default route points to this gateway; firewall must respond to ARP for it.
+	envSlice = append(envSlice, "GATEWAY="+gateway)
 
 	labels := sandbox.DefaultLabels(s.hash, s.path, "")
 	labels[sandbox.SandboxRole] = "firewall"
