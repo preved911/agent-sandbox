@@ -4,6 +4,7 @@ package network
 import (
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
@@ -11,6 +12,11 @@ import (
 
 	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
+
+// requiredSubnet is the fixed subnet for all sandbox networks.
+// The gateway (172.20.0.1) is reserved for host-side proxy goroutines.
+// The firewall uses 172.20.0.2.
+const requiredSubnet = "172.20.0.0/16"
 
 // Create creates an isolated Docker bridge network for the sandbox.
 // The network has no default gateway to the host bridge — the firewall
@@ -22,7 +28,7 @@ import (
 func Create(ctx context.Context, cli *client.Client, hash string) (networkID string, err error) {
 	name := sandbox.ResourceName(hash, sandbox.SuffixNet)
 
-	// Check if network already exists.
+	// Check if network already exists with correct subnet.
 	networks, err := cli.NetworkList(ctx, network.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("name", name)),
 	})
@@ -31,6 +37,16 @@ func Create(ctx context.Context, cli *client.Client, hash string) (networkID str
 	}
 	for _, n := range networks {
 		if n.Name == name {
+			// Verify subnet matches. If not, remove and recreate.
+			if subnetOK, err := hasSubnet(ctx, cli, n.ID); err != nil {
+				return "", fmt.Errorf("inspect network %s: %w", name, err)
+			} else if !subnetOK {
+				fmt.Printf("Network %s has wrong subnet, recreating...\n", name)
+				if err := cli.NetworkRemove(ctx, n.ID); err != nil {
+					return "", fmt.Errorf("remove stale network %s: %w", name, err)
+				}
+				break // fall through to create
+			}
 			return n.ID, nil
 		}
 	}
@@ -45,7 +61,7 @@ func Create(ctx context.Context, cli *client.Client, hash string) (networkID str
 		Internal: true,
 		IPAM: &network.IPAM{
 			Config: []network.IPAMConfig{
-				{Subnet: "172.20.0.0/16", Gateway: "172.20.0.1"},
+				{Subnet: requiredSubnet, Gateway: "172.20.0.1"},
 			},
 		},
 		Labels: map[string]string{
@@ -58,6 +74,30 @@ func Create(ctx context.Context, cli *client.Client, hash string) (networkID str
 	}
 
 	return resp.ID, nil
+}
+
+// hasSubnet checks if a network has the required subnet configured.
+func hasSubnet(ctx context.Context, cli *client.Client, networkID string) (bool, error) {
+	resp, err := cli.NetworkInspect(ctx, networkID, network.InspectOptions{})
+	if err != nil {
+		return false, err
+	}
+	_, required, err := net.ParseCIDR(requiredSubnet)
+	if err != nil {
+		return false, err
+	}
+	for _, cfg := range resp.IPAM.Config {
+		if cfg.Subnet != "" {
+			_, actual, err := net.ParseCIDR(cfg.Subnet)
+			if err != nil {
+				continue
+			}
+			if actual.String() == required.String() {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // Remove removes the isolated network by hash.
