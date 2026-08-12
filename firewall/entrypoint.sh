@@ -157,6 +157,7 @@ cat >> /etc/nftables.conf <<NFTABLES_EOF
         ip saddr ${SUBNET:-10.0.0.0/8} masquerade
     }
 }
+NFTABLES_EOF
 
 echo "Generated nftables config:"
 cat /etc/nftables.conf
