@@ -20,18 +20,30 @@ fi
 # --- Detect interfaces ---
 # INSIDE_IF: interface on the isolated subnet (agent side)
 # OUTSIDE_IF: interface on the default bridge (internet side)
-OUTSIDE_IF=$(ip route show default | awk '{print $5}' | head -1)
+#
+# Detection strategy:
+# 1. OUTSIDE_IF = default route interface (always the bridge)
+# 2. INSIDE_IF = any non-loopback, non-outside interface (the isolated network)
+# This avoids fragile route-table grepping that breaks on Docker Desktop for Mac.
 
-# Find the interface with a connected route for SUBNET (e.g. "10.130.214.0/24 dev eth1")
-INSIDE_IF=$(ip route show | grep "dev.*${SUBNET:-__none__}" | awk '{print $5}' | head -1)
+OUTSIDE_IF=$(ip route show default | awk '{print $5}' | head -1 || true)
+
+# Find the inside interface: any interface that's not lo and not the outside one
+INSIDE_IF=""
+for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -v '^lo$'); do
+    if [ "$iface" != "$OUTSIDE_IF" ]; then
+        INSIDE_IF="$iface"
+        break
+    fi
+done
 
 if [ -z "$INSIDE_IF" ] || [ -z "$OUTSIDE_IF" ]; then
-    echo "ERROR: Could not detect network interfaces (subnet=${SUBNET:-unset})"
-    echo "  Default route: $OUTSIDE_IF"
-    echo "  Routes:"
-    ip route show
-    echo "  Interfaces:"
-    ip -o addr show
+    echo "ERROR: Could not detect network interfaces (subnet=${SUBNET:-unset})" >&2
+    echo "  Default route: $OUTSIDE_IF" >&2
+    echo "  Routes:" >&2
+    ip route show >&2
+    echo "  Interfaces:" >&2
+    ip -o addr show >&2
     exit 1
 fi
 
