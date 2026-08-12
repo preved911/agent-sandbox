@@ -2,14 +2,12 @@ package cli
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/spf13/cobra"
 
 	"github.com/preved911/agent-sandbox/internal/build"
@@ -182,23 +180,22 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 					args[i] = strings.ReplaceAll(a, "%s", localURL)
 				}
 
-				// Run attach inside the agent container via docker exec.
-				// This ensures the command connects to the agent's port
-				// directly (localhost) rather than through the firewall's
-				// published port (which Docker's proxy intercepts).
-				agentName := sandbox.ResourceName(hash, sandbox.SuffixAgent)
-				execArgs := append([]string{"exec", "-it", agentName}, args...)
-				fmt.Fprintf(out, "$ docker %s\n", strings.Join(execArgs, " "))
+			// Run attach inside the agent container via docker exec.
+			// This ensures the command connects to the agent's port
+			// directly (localhost) rather than through the firewall's
+			// published port (which Docker's proxy intercepts).
+			// We use plain exec (no creack/pty) because docker exec -it
+			// already allocates a PTY inside the container — wrapping it
+			// in another PTY would corrupt terminal escape sequences.
+			agentName := sandbox.ResourceName(hash, sandbox.SuffixAgent)
+			execArgs := append([]string{"exec", "-it", agentName}, args...)
+			fmt.Fprintf(out, "$ docker %s\n", strings.Join(execArgs, " "))
 
-				c := exec.CommandContext(ctx, "docker", execArgs...)
-				f, err := pty.Start(c)
-				if err != nil {
-					return fmt.Errorf("attach: %w", err)
-				}
-				// Connect user's terminal to the PTY.
-				go io.Copy(f, os.Stdin)
-				io.Copy(os.Stdout, f)
-				return c.Wait()
+			c := exec.CommandContext(ctx, "docker", execArgs...)
+			c.Stdin = os.Stdin
+			c.Stdout = os.Stdout
+			c.Stderr = os.Stderr
+			return c.Run()
 			}
 
 			// No attach command configured — print URL for manual connection.
