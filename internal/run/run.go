@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	dockernet "github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 
 	"github.com/preved911/agent-sandbox/internal/config"
@@ -36,9 +37,15 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 		return err
 	}
 
-	// Mount sessions volume only if data_dir is configured.
+	name := sandbox.ResourceName(hash, sandbox.SuffixAgent)
+	labels := sandbox.DefaultLabels(hash, path, "")
+
+	// Create and mount sessions volume only if data_dir is configured.
 	if cfg.Run.DataDir != "" {
 		volumeName := sandbox.ResourceName(hash, sandbox.SuffixSessions)
+		if err := ensureVolume(ctx, cli, volumeName, labels); err != nil {
+			return fmt.Errorf("create session volume: %w", err)
+		}
 		otherMounts = append(otherMounts, mount.Mount{
 			Type:   mount.TypeVolume,
 			Source: volumeName,
@@ -46,20 +53,27 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 		})
 	}
 
-	// Mount cache volumes.
+	// Create and mount cache volumes.
 	for _, c := range cfg.Run.Cache {
 		if c.Name == "" || c.Path == "" {
 			continue
 		}
+		cacheName := sandbox.CacheName(hash, c.Name)
+		cacheLabels := map[string]string{
+			sandbox.Label:     "true",
+			sandbox.CacheLabel: "true",
+			sandbox.LabelHash: hash,
+			sandbox.LabelPath: path,
+		}
+		if err := ensureVolume(ctx, cli, cacheName, cacheLabels); err != nil {
+			return fmt.Errorf("create cache volume %s: %w", c.Name, err)
+		}
 		otherMounts = append(otherMounts, mount.Mount{
 			Type:   mount.TypeVolume,
-			Source: sandbox.CacheName(hash, c.Name),
+			Source: cacheName,
 			Target: c.Path,
 		})
 	}
-
-	name := sandbox.ResourceName(hash, sandbox.SuffixAgent)
-	labels := sandbox.DefaultLabels(hash, path, "")
 
 	cConf := &container.Config{
 		Image:      image,
@@ -285,4 +299,18 @@ func buildMounts(cfg *config.Config) (binds []string, mounts []mount.Mount, err 
 		}
 	}
 	return binds, mounts, nil
+}
+
+// ensureVolume creates a Docker named volume if it doesn't exist.
+// If the volume already exists, it's a no-op (preserves existing data).
+func ensureVolume(ctx context.Context, cli *client.Client, name string, labels map[string]string) error {
+	_, err := cli.VolumeInspect(ctx, name)
+	if err == nil {
+		return nil // already exists
+	}
+	_, err = cli.VolumeCreate(ctx, volume.CreateOptions{
+		Name:   name,
+		Labels: labels,
+	})
+	return err
 }
