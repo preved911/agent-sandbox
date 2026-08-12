@@ -160,18 +160,41 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 					args[i] = strings.ReplaceAll(a, "%s", localURL)
 				}
 
-			// Run attach inside the agent container via Docker exec API.
-			// This is identical to what `docker exec -it` does internally:
-			// 1. Create exec with TTY=true
-			// 2. Attach (opens bidirectional stream)
-			// 3. Put host terminal into raw mode
-			// 4. Copy bytes bidirectionally
-			// We do it via SDK so we control the raw mode on the correct fd.
 			agentName := sandbox.ResourceName(hash, sandbox.SuffixAgent)
 
 			dockerCli, err := docker.NewClient("")
 			if err != nil {
 				return fmt.Errorf("docker client: %w", err)
+			}
+
+			// Wait for agent container to be ready (exec `true` must succeed).
+			// First run may take a few seconds as the container initializes.
+			fmt.Fprint(out, "Waiting for agent to be ready...")
+			ready := false
+			for i := 0; i < 30; i++ { // up to 30 seconds
+				pingCfg := container.ExecOptions{
+					Cmd:          []string{"true"},
+					AttachStdout: true,
+					AttachStderr: true,
+				}
+				pingResp, err := dockerCli.ContainerExecCreate(ctx, agentName, pingCfg)
+				if err == nil {
+					pingAttach, err := dockerCli.ContainerExecAttach(ctx, pingResp.ID, container.ExecStartOptions{})
+					if err == nil {
+						pingAttach.Close()
+						inspect, err := dockerCli.ContainerExecInspect(ctx, pingResp.ID)
+						if err == nil && inspect.ExitCode == 0 {
+							ready = true
+							break
+						}
+					}
+				}
+				fmt.Fprint(out, ".")
+				time.Sleep(1 * time.Second)
+			}
+			fmt.Fprintln(out)
+			if !ready {
+				return fmt.Errorf("timeout waiting for agent container to be ready")
 			}
 
 			execCfg := container.ExecOptions{
