@@ -9,7 +9,13 @@ set -euo pipefail
 # 4. Set up SNAT for outbound traffic
 
 # --- IP forwarding ---
-echo 1 > /proc/sys/net/ipv4/ip_forward
+# /proc is read-only inside the container; ip_forward is typically already
+# enabled on Docker hosts.  Only attempt the write when it isn't set yet.
+CURRENT_FWD=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 0)
+if [ "$CURRENT_FWD" != "1" ]; then
+    echo 1 > /proc/sys/net/ipv4/ip_forward 2>/dev/null || \
+        echo "WARN: cannot set ip_forward (may already be enabled on host)" >&2
+fi
 
 # --- Detect interfaces ---
 # INSIDE_IF: interface facing the isolated network (agent side)
