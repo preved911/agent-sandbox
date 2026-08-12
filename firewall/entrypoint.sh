@@ -17,29 +17,48 @@ if [ "$CURRENT_FWD" != "1" ]; then
         echo "WARN: cannot set ip_forward (may already be enabled on host)" >&2
 fi
 
-# --- Detect interfaces ---
-# INSIDE_IF: interface on the isolated subnet (agent side)
-# OUTSIDE_IF: interface on the default bridge (internet side)
-#
-# Detection strategy:
-# 1. OUTSIDE_IF = default route interface (always the bridge)
-# 2. INSIDE_IF = any non-loopback, non-outside interface (the isolated network)
-# This avoids fragile route-table grepping that breaks on Docker Desktop for Mac.
+# --- Detect network configuration ---
+# On Docker Desktop for Mac, multiple interfaces may share the same name (e.g. both eth0).
+# Interface-name-based matching (iifname/oifname) is unreliable in this environment.
+# Strategy: detect the inside IP by matching against SUBNET, then use IP-based matching
+# in nftables rules (ip saddr/ip daddr) instead of interface names.
 
-OUTSIDE_IF=$(ip route show default | awk '{print $5}' | head -1 || true)
+# Extract subnet prefix for matching (e.g. "10.130.214" from "10.130.214.0/24")
+SUBNET_PREFIX=""
+if [ -n "${SUBNET:-}" ]; then
+    SUBNET_PREFIX=$(echo "$SUBNET" | cut -d. -f1-3)
+fi
 
-# Find the inside interface: any interface that's not lo and not the outside one
-INSIDE_IF=""
-for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -v '^lo$'); do
-    if [ "$iface" != "$OUTSIDE_IF" ]; then
-        INSIDE_IF="$iface"
-        break
+# Find the inside IP: any non-loopback IP whose first 3 octets match SUBNET
+INSIDE_IP=""
+for iface in $(ip -o addr show | awk '{print $2}' | grep -v '^lo$' | sort -u); do
+    iface_ip=$(ip -o addr show dev "$iface" 2>/dev/null | awk '/inet /{print $4}' | head -1 | cut -d/ -f1)
+    if [ -n "$iface_ip" ] && [ -n "$SUBNET_PREFIX" ]; then
+        ip_prefix=$(echo "$iface_ip" | cut -d. -f1-3)
+        if [ "$ip_prefix" = "$SUBNET_PREFIX" ]; then
+            INSIDE_IP="$iface_ip"
+            break
+        fi
     fi
 done
 
-if [ -z "$INSIDE_IF" ] || [ -z "$OUTSIDE_IF" ]; then
-    echo "ERROR: Could not detect network interfaces (subnet=${SUBNET:-unset})" >&2
-    echo "  Default route: $OUTSIDE_IF" >&2
+# Fallback: if SUBNET not set, try to find any non-172.17.x.x IP
+if [ -z "$INSIDE_IP" ]; then
+    for iface in $(ip -o addr show | awk '{print $2}' | grep -v '^lo$' | sort -u); do
+        iface_ip=$(ip -o addr show dev "$iface" 2>/dev/null | awk '/inet /{print $4}' | head -1 | cut -d/ -f1)
+        if [ -n "$iface_ip" ]; then
+            # Skip the default bridge (172.17.x.x)
+            case "$iface_ip" in
+                172.17.*) continue ;;
+            esac
+            INSIDE_IP="$iface_ip"
+            break
+        fi
+    done
+fi
+
+if [ -z "$INSIDE_IP" ]; then
+    echo "ERROR: Could not detect inside IP (subnet=${SUBNET:-unset})" >&2
     echo "  Routes:" >&2
     ip route show >&2
     echo "  Interfaces:" >&2
@@ -47,10 +66,6 @@ if [ -z "$INSIDE_IF" ] || [ -z "$OUTSIDE_IF" ]; then
     exit 1
 fi
 
-echo "Interfaces: inside=$INSIDE_IF outside=$OUTSIDE_IF"
-
-# Get the inside interface IP (agent's gateway)
-INSIDE_IP=$(ip addr show "$INSIDE_IF" | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
 echo "Inside IP (agent gateway): $INSIDE_IP"
 
 # --- Generate nftables config ---
@@ -139,7 +154,7 @@ cat >> /etc/nftables.conf <<NFTABLES_EOF
         type nat hook postrouting priority 100;
 
         # SNAT outbound traffic from agent to internet
-        ip saddr ${SUBNET:-10.0.0.0/8} oifname "$OUTSIDE_IF" masquerade
+        ip saddr ${SUBNET:-10.0.0.0/8} masquerade
     }
 }
 

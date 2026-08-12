@@ -29,7 +29,7 @@ func NewFirewallContainer(cli *client.Client, hash string) *FirewallContainer {
 
 // GenerateNftables generates the nftables config for the sandbox.
 func (f *FirewallContainer) GenerateNftables(fwCfg *config.FirewallConfig) string {
-	return GenerateNftablesConfig(fwCfg, "eth0", nil, "")
+	return GenerateNftablesConfig(fwCfg, nil, "")
 }
 
 // GenerateCoreDNS generates the CoreDNS config for the sandbox.
