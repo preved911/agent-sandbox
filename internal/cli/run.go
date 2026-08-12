@@ -102,11 +102,20 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			s := stack.New(cli, hash, cwd, cfg)
 			out := cmd.OutOrStdout()
 
+			agentName := sandbox.ResourceName(hash, sandbox.SuffixAgent)
+
+			dockerCli, err := docker.NewClient("")
+			if err != nil {
+				return fmt.Errorf("docker client: %w", err)
+			}
+
 			// Check if stack already exists.
 			exists, err := s.Exists(ctx)
 			if err != nil {
 				return fmt.Errorf("check sandbox: %w", err)
 			}
+
+		needsReadiness := false // true after fresh create+start or start-from-stopped
 
 		if !exists {
 				// Sandbox doesn't exist — build, create, start.
@@ -137,6 +146,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 					return fmt.Errorf("start sandbox: %w", err)
 				}
 				fmt.Fprintln(out, " done")
+				needsReadiness = true
 			} else {
 				// Sandbox exists — start if stopped.
 				status, err := s.Status(ctx)
@@ -149,8 +159,50 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 						return fmt.Errorf("start sandbox: %w", err)
 					}
 					fmt.Fprintln(out, " done")
+					needsReadiness = true
 				}
 				// If already running, agent is already listening — skip readiness check.
+			}
+
+			// Wait for the agent to be ready (only after fresh creation or start).
+			if needsReadiness {
+				// Extract port number from "4096/tcp" format for the readiness probe.
+				containerPort := strings.Split(cfg.Run.Port.Container, "/")[0]
+				readyCmd := fmt.Sprintf(
+					"for i in $(seq 1 30); do curl -s -o /dev/null -w '' --connect-timeout 1 http://localhost:%s && exit 0; sleep 1; done; exit 1",
+					containerPort,
+				)
+
+				fmt.Fprint(out, "Waiting for agent...")
+				readinessCfg := container.ExecOptions{
+					Cmd:   []string{"sh", "-c", readyCmd},
+					Tty:   false,
+					Env:   []string{"TERM=xterm-256color"},
+				}
+				readinessResp, err := dockerCli.ContainerExecCreate(ctx, agentName, readinessCfg)
+				if err != nil {
+					fmt.Fprintf(out, " readiness check failed: %v\n", err)
+				} else {
+					readinessAttach, err := dockerCli.ContainerExecAttach(ctx, readinessResp.ID, container.ExecStartOptions{})
+					if err == nil {
+						// Read output to let the exec run to completion.
+						io.Copy(io.Discard, readinessAttach.Reader)
+						readinessAttach.Close()
+					}
+
+					for i := 0; i < 60; i++ {
+						inspect, err := dockerCli.ContainerExecInspect(ctx, readinessResp.ID)
+						if err == nil && !inspect.Running {
+							if inspect.ExitCode == 0 {
+								fmt.Fprintln(out, " ready.")
+							} else {
+								fmt.Fprintln(out, " not ready (agent may still be starting).")
+							}
+							break
+						}
+						time.Sleep(500 * time.Millisecond)
+					}
+				}
 			}
 
 			// Get the published port from the firewall container.
@@ -184,13 +236,6 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			args := make([]string, len(cmdArgs))
 			for i, a := range cmdArgs {
 				args[i] = strings.ReplaceAll(a, "%s", localURL)
-			}
-
-			agentName := sandbox.ResourceName(hash, sandbox.SuffixAgent)
-
-			dockerCli, err := docker.NewClient("")
-			if err != nil {
-				return fmt.Errorf("docker client: %w", err)
 			}
 
 			const maxRetries = 3
