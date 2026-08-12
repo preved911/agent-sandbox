@@ -570,8 +570,8 @@ The agent image needs the `opencode` binary. Version selection uses **build-arg 
 
 ### Recipes (documented, not hard-coded flags)
 
-- **Package registries:** add the registry domain to `firewall.network.dns.allow`.
-- **Private registries/subnets:** add CIDRs to `firewall.network.cidr.allow`.
+- **Package registries:** add the registry domain to `firewall.dns.allow`.
+- **Private registries/subnets:** add CIDRs to `firewall.cidr.allow`.
 
 ---
 

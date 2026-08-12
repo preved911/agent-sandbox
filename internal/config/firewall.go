@@ -6,11 +6,6 @@ type FirewallConfig struct {
 	// If empty, uses "agent-sandbox-firewall:latest" and auto-builds if missing.
 	Image string `yaml:"image,omitempty"`
 
-	Network NetworkConfig `yaml:"network,omitempty"`
-}
-
-// NetworkConfig defines the CIDR and DNS filtering policy.
-type NetworkConfig struct {
 	// Default is the IP-layer policy when no allow/deny rule matches.
 	// "deny" (default, secure) drops everything not explicitly allowed.
 	// "allow" (permissive) allows everything not explicitly denied.

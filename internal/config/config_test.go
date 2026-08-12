@@ -52,8 +52,7 @@ profiles:
         sockets:
           - socket: /var/run/docker.sock
             container: 2375
-    firewall:
-      network:
+      firewall:
         default: deny
         cidr:
           allow:
@@ -79,20 +78,20 @@ profiles:
 	}
 
 	// Firewall
-	if cfg.Firewall.Network.Default != "deny" {
-		t.Errorf("Firewall.Network.Default = %q, want %q", cfg.Firewall.Network.Default, "deny")
+	if cfg.Run.Firewall.Default != "deny" {
+		t.Errorf("Firewall.Default = %q, want %q", cfg.Run.Firewall.Default, "deny")
 	}
-	if len(cfg.Firewall.Network.CIDR.Allow) != 1 || cfg.Firewall.Network.CIDR.Allow[0] != "10.0.0.0/8" {
-		t.Errorf("Firewall.Network.CIDR.Allow = %v, want [10.0.0.0/8]", cfg.Firewall.Network.CIDR.Allow)
+	if len(cfg.Run.Firewall.CIDR.Allow) != 1 || cfg.Run.Firewall.CIDR.Allow[0] != "10.0.0.0/8" {
+		t.Errorf("Firewall.CIDR.Allow = %v, want [10.0.0.0/8]", cfg.Run.Firewall.CIDR.Allow)
 	}
-	if len(cfg.Firewall.Network.CIDR.Deny) != 1 || cfg.Firewall.Network.CIDR.Deny[0] != "10.0.0.0/24" {
-		t.Errorf("Firewall.Network.CIDR.Deny = %v, want [10.0.0.0/24]", cfg.Firewall.Network.CIDR.Deny)
+	if len(cfg.Run.Firewall.CIDR.Deny) != 1 || cfg.Run.Firewall.CIDR.Deny[0] != "10.0.0.0/24" {
+		t.Errorf("Firewall.CIDR.Deny = %v, want [10.0.0.0/24]", cfg.Run.Firewall.CIDR.Deny)
 	}
-	if len(cfg.Firewall.Network.DNS.Allow) != 2 {
-		t.Errorf("Firewall.Network.DNS.Allow len = %d, want 2", len(cfg.Firewall.Network.DNS.Allow))
+	if len(cfg.Run.Firewall.DNS.Allow) != 2 {
+		t.Errorf("Firewall.DNS.Allow len = %d, want 2", len(cfg.Run.Firewall.DNS.Allow))
 	}
-	if len(cfg.Firewall.Network.DNS.Deny) != 1 {
-		t.Errorf("Firewall.Network.DNS.Deny len = %d, want 1", len(cfg.Firewall.Network.DNS.Deny))
+	if len(cfg.Run.Firewall.DNS.Deny) != 1 {
+		t.Errorf("Firewall.DNS.Deny len = %d, want 1", len(cfg.Run.Firewall.DNS.Deny))
 	}
 
 	// Reverse forward
@@ -183,9 +182,7 @@ func TestValidateCIDR(t *testing.T) {
 			cfg := &Config{
 				Run: RunConfig{
 					Port: PortConfig{Container: "4096/tcp"},
-				},
-				Firewall: FirewallConfig{
-					Network: NetworkConfig{
+					Firewall: FirewallConfig{
 						CIDR: CIDRRules{Allow: []string{tt.cidr}},
 					},
 				},
@@ -233,13 +230,11 @@ func TestValidateDNSUpstream(t *testing.T) {
 	cfg := &Config{
 		Run: RunConfig{
 			Port: PortConfig{Container: "4096/tcp"},
-		},
-		Firewall: FirewallConfig{
-			Network: NetworkConfig{
-				DNS: DNSRules{
-					Upstream: []string{"1.1.1.1", "not-an-ip"},
+			Firewall: FirewallConfig{
+					DNS: DNSRules{
+						Upstream: []string{"1.1.1.1", "not-an-ip"},
+					},
 				},
-			},
 		},
 	}
 	err := Validate(cfg)
@@ -264,9 +259,7 @@ func TestValidateNetworkDefault(t *testing.T) {
 			cfg := &Config{
 				Run: RunConfig{
 					Port: PortConfig{Container: "4096/tcp"},
-				},
-				Firewall: FirewallConfig{
-					Network: NetworkConfig{Default: tt.def},
+					Firewall: FirewallConfig{Default: tt.def},
 				},
 			}
 			err := Validate(cfg)

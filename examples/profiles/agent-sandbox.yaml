@@ -30,7 +30,7 @@ profiles:
       entrypoint: ["opencode"]
       command: ["serve", "--hostname=0.0.0.0", "--port=4096"]
       data_dir: /root/.local/share/opencode
-      attach_cmd: "opencode attach %s"
+      attach_cmd: ["opencode", "attach", "%s"]
       env:
         GOFLAGS: "-mod=mod"
         OPENCODE_TELEMETRY: "0"
@@ -48,8 +48,7 @@ profiles:
       port:
         container: 4096/tcp
         bind: 127.0.0.1
-    firewall:
-      network:
+      firewall:
         default: deny
         dns:
           default: allow
@@ -63,7 +62,7 @@ profiles:
       entrypoint: ["opencode"]
       command: ["serve", "--hostname=0.0.0.0", "--port=4096"]
       data_dir: /root/.local/share/opencode
-      attach_cmd: "opencode attach %s"
+      attach_cmd: ["opencode", "attach", "%s"]
       env:
         NODE_ENV: development
         OPENCODE_TELEMETRY: "0"
@@ -84,8 +83,7 @@ profiles:
       port:
         container: 4096/tcp
         bind: 127.0.0.1
-    firewall:
-      network:
+      firewall:
         default: deny
         dns:
           default: allow

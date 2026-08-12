@@ -14,7 +14,7 @@ func Validate(c *Config) error {
 	if err := validateRun(&c.Run); err != nil {
 		return fmt.Errorf("run: %w", err)
 	}
-	if err := validateFirewall(&c.Firewall); err != nil {
+	if err := validateFirewall(&c.Run.Firewall); err != nil {
 		return fmt.Errorf("firewall: %w", err)
 	}
 	if err := validateReverseForward(&c.Run.ReverseForward); err != nil {
@@ -54,13 +54,13 @@ func validateRun(r *RunConfig) error {
 }
 
 func validateFirewall(f *FirewallConfig) error {
-	if err := validateDefaultPolicy(f.Network.Default, "network.default"); err != nil {
+	if err := validateDefaultPolicy(f.Default, "firewall.default"); err != nil {
 		return err
 	}
-	if err := validateCIDRRules(&f.Network.CIDR); err != nil {
+	if err := validateCIDRRules(&f.CIDR); err != nil {
 		return err
 	}
-	if err := validateDNSRules(&f.Network.DNS); err != nil {
+	if err := validateDNSRules(&f.DNS); err != nil {
 		return err
 	}
 	return nil

@@ -8,7 +8,7 @@ import (
 )
 
 func TestGenerateNftablesConfig_DenyBeforeAllow(t *testing.T) {
-	network := &config.NetworkConfig{
+	network := &config.FirewallConfig{
 		Default: "deny",
 		CIDR: config.CIDRRules{
 			Allow: []string{"10.0.0.0/8", "192.168.0.0/16"},
@@ -34,7 +34,7 @@ func TestGenerateNftablesConfig_DenyBeforeAllow(t *testing.T) {
 }
 
 func TestGenerateNftablesConfig_DefaultDeny(t *testing.T) {
-	network := &config.NetworkConfig{
+	network := &config.FirewallConfig{
 		Default: "deny",
 	}
 
@@ -46,7 +46,7 @@ func TestGenerateNftablesConfig_DefaultDeny(t *testing.T) {
 }
 
 func TestGenerateNftablesConfig_DefaultAllow(t *testing.T) {
-	network := &config.NetworkConfig{
+	network := &config.FirewallConfig{
 		Default: "allow",
 	}
 
@@ -107,7 +107,7 @@ func TestGenerateNftablesConfig_NoDNAT(t *testing.T) {
 }
 
 func TestGenerateNftablesConfigWithReverse(t *testing.T) {
-	network := &config.NetworkConfig{Default: "deny"}
+	network := &config.FirewallConfig{Default: "deny"}
 	dnat := &DNATConfig{
 		AgentIP:   "172.20.0.10",
 		AgentPort: "4096/tcp",
@@ -124,7 +124,7 @@ func TestGenerateNftablesConfigWithReverse(t *testing.T) {
 }
 
 func TestValidateCIDRRules_NoConflict(t *testing.T) {
-	network := &config.NetworkConfig{
+	network := &config.FirewallConfig{
 		CIDR: config.CIDRRules{
 			Allow: []string{"10.0.0.0/8"},
 			Deny:  []string{"192.168.0.0/16"},
@@ -138,7 +138,7 @@ func TestValidateCIDRRules_NoConflict(t *testing.T) {
 }
 
 func TestValidateCIDRRules_Conflict(t *testing.T) {
-	network := &config.NetworkConfig{
+	network := &config.FirewallConfig{
 		CIDR: config.CIDRRules{
 			Allow: []string{"10.0.0.0/8"},
 			Deny:  []string{"10.0.0.0/24"},

@@ -25,7 +25,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 		envOverrides   []string
 		mountOverrides []string
 		bindOverride   string
-		attachCmd      string
+		attachCmd      []string
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -137,10 +137,13 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 
 			// Execute attach command.
 			out := cmd.OutOrStdout()
-			if attachCmd != "" {
-				cmdStr := strings.ReplaceAll(attachCmd, "%s", url)
-				fmt.Fprintf(out, "$ %s\n", cmdStr)
-				c := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+			if len(attachCmd) > 0 {
+				args := make([]string, len(attachCmd))
+				for i, a := range attachCmd {
+					args[i] = strings.ReplaceAll(a, "%s", url)
+				}
+				fmt.Fprintf(out, "$ %s\n", strings.Join(args, " "))
+				c := exec.CommandContext(ctx, args[0], args[1:]...)
 				c.Stdout = out
 				c.Stderr = cmd.ErrOrStderr()
 				c.Stdin = os.Stdin
@@ -148,10 +151,13 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 
 			// Use config-defined attach command if available.
-			if cfg.Run.AttachCmd != "" {
-				cmdStr := strings.ReplaceAll(cfg.Run.AttachCmd, "%s", url)
-				fmt.Fprintf(out, "$ %s\n", cmdStr)
-				c := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+			if len(cfg.Run.AttachCmd) > 0 {
+				args := make([]string, len(cfg.Run.AttachCmd))
+				for i, a := range cfg.Run.AttachCmd {
+					args[i] = strings.ReplaceAll(a, "%s", url)
+				}
+				fmt.Fprintf(out, "$ %s\n", strings.Join(args, " "))
+				c := exec.CommandContext(ctx, args[0], args[1:]...)
 				c.Stdout = out
 				c.Stderr = cmd.ErrOrStderr()
 				c.Stdin = os.Stdin
@@ -172,7 +178,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 	cmd.Flags().StringArrayVarP(&envOverrides, "env", "e", nil, "set or override an env var (KEY=VALUE); repeatable")
 	cmd.Flags().StringArrayVarP(&mountOverrides, "mount", "v", nil, "append a mount (source:target[:ro]); repeatable")
 	cmd.Flags().StringVar(&bindOverride, "bind", "", "override run.port.bind (e.g. 0.0.0.0)")
-	cmd.Flags().StringVar(&attachCmd, "cmd", "", "custom attach command (use %%s for URL placeholder)")
+	cmd.Flags().StringArrayVar(&attachCmd, "cmd", nil, "custom attach command (use %%s for URL placeholder); repeatable")
 	return cmd
 }
 

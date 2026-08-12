@@ -28,52 +28,52 @@ func NewFirewallContainer(cli *client.Client, hash string) *FirewallContainer {
 }
 
 // GenerateNftables generates the nftables config for the sandbox.
-func (f *FirewallContainer) GenerateNftables(networkCfg *config.NetworkConfig) string {
-	return GenerateNftablesConfig(networkCfg, "eth0", nil)
+func (f *FirewallContainer) GenerateNftables(fwCfg *config.FirewallConfig) string {
+	return GenerateNftablesConfig(fwCfg, "eth0", nil)
 }
 
 // GenerateCoreDNS generates the CoreDNS config for the sandbox.
-func (f *FirewallContainer) GenerateCoreDNS(networkCfg *config.NetworkConfig) string {
-	return GenerateCoreDNSConfig(networkCfg)
+func (f *FirewallContainer) GenerateCoreDNS(fwCfg *config.FirewallConfig) string {
+	return GenerateCoreDNSConfig(fwCfg)
 }
 
-// ValidateConfig validates the network configuration and logs warnings.
-func (f *FirewallContainer) ValidateConfig(networkCfg *config.NetworkConfig) {
-	warnings := ValidateCIDRRules(networkCfg)
+// ValidateConfig validates the firewall configuration and logs warnings.
+func (f *FirewallContainer) ValidateConfig(fwCfg *config.FirewallConfig) {
+	warnings := ValidateCIDRRules(fwCfg)
 	for _, w := range warnings {
 		log.Printf("WARNING: %s", w)
 	}
 
-	dnsWarnings := ValidateDNSRules(networkCfg)
+	dnsWarnings := ValidateDNSRules(fwCfg)
 	for _, w := range dnsWarnings {
 		log.Printf("WARNING: %s", w)
 	}
 }
 
 // FirewallEnv returns environment variables for the firewall container.
-func (f *FirewallContainer) FirewallEnv(networkCfg *config.NetworkConfig) []string {
+func (f *FirewallContainer) FirewallEnv(fwCfg *config.FirewallConfig) []string {
 	var env []string
 
-	if networkCfg != nil {
+	if fwCfg != nil {
 		// CIDR rules
-		if len(networkCfg.CIDR.Allow) > 0 {
-			env = append(env, fmt.Sprintf("ALLOW_CIDRS=%s", joinStrings(networkCfg.CIDR.Allow)))
+		if len(fwCfg.CIDR.Allow) > 0 {
+			env = append(env, fmt.Sprintf("ALLOW_CIDRS=%s", joinStrings(fwCfg.CIDR.Allow)))
 		}
-		if len(networkCfg.CIDR.Deny) > 0 {
-			env = append(env, fmt.Sprintf("DENY_CIDRS=%s", joinStrings(networkCfg.CIDR.Deny)))
+		if len(fwCfg.CIDR.Deny) > 0 {
+			env = append(env, fmt.Sprintf("DENY_CIDRS=%s", joinStrings(fwCfg.CIDR.Deny)))
 		}
-		env = append(env, fmt.Sprintf("NETWORK_DEFAULT=%s", defaultStr(networkCfg.Default, "deny")))
+		env = append(env, fmt.Sprintf("NETWORK_DEFAULT=%s", defaultStr(fwCfg.Default, "deny")))
 
 		// DNS rules
-		if len(networkCfg.DNS.Allow) > 0 {
-			env = append(env, fmt.Sprintf("ALLOW_DOMAINS=%s", joinStrings(networkCfg.DNS.Allow)))
+		if len(fwCfg.DNS.Allow) > 0 {
+			env = append(env, fmt.Sprintf("ALLOW_DOMAINS=%s", joinStrings(fwCfg.DNS.Allow)))
 		}
-		if len(networkCfg.DNS.Deny) > 0 {
-			env = append(env, fmt.Sprintf("DENY_DOMAINS=%s", joinStrings(networkCfg.DNS.Deny)))
+		if len(fwCfg.DNS.Deny) > 0 {
+			env = append(env, fmt.Sprintf("DENY_DOMAINS=%s", joinStrings(fwCfg.DNS.Deny)))
 		}
-		env = append(env, fmt.Sprintf("DNS_DEFAULT=%s", defaultStr(networkCfg.DNS.Default, "deny")))
-		if len(networkCfg.DNS.Upstream) > 0 {
-			env = append(env, fmt.Sprintf("DNS_UPSTREAM=%s", joinStrings(networkCfg.DNS.Upstream)))
+		env = append(env, fmt.Sprintf("DNS_DEFAULT=%s", defaultStr(fwCfg.DNS.Default, "deny")))
+		if len(fwCfg.DNS.Upstream) > 0 {
+			env = append(env, fmt.Sprintf("DNS_UPSTREAM=%s", joinStrings(fwCfg.DNS.Upstream)))
 		}
 	}
 

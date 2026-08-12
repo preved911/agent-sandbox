@@ -10,9 +10,9 @@
 //	profiles:
 //	  go-dev:
 //	    build: ...
-//	    run: ...
-//	    firewall: ...
-//	    permissions: ...
+//	    run:
+//	      firewall: ...
+//	      ...
 //
 // Load resolves an explicit path, then ./agent-sandbox.yaml, then the
 // central default at $HOME/.config/agent-sandbox/config.yaml
@@ -31,10 +31,9 @@ import (
 
 // Config is a single sandbox/profile configuration.
 type Config struct {
-	Name     string         `yaml:"name,omitempty"`
-	Build    BuildConfig    `yaml:"build,omitempty"`
-	Run      RunConfig      `yaml:"run,omitempty"`
-	Firewall FirewallConfig `yaml:"firewall,omitempty"`
+	Name  string      `yaml:"name,omitempty"`
+	Build BuildConfig `yaml:"build,omitempty"`
+	Run   RunConfig   `yaml:"run,omitempty"`
 
 	// Computed fields (not user config, set by loader)
 	SharedPathsCheck bool // from docker.macos.shared_paths_check (macOS only)
@@ -68,8 +67,9 @@ type RunConfig struct {
 	Entrypoint     []string             `yaml:"entrypoint,omitempty"`
 	Command        []string             `yaml:"command,omitempty"`
 	DataDir        string               `yaml:"data_dir,omitempty"`
-	AttachCmd      string               `yaml:"attach_cmd,omitempty"`
+	AttachCmd      []string             `yaml:"attach_cmd,omitempty"`
 	ReverseForward ReverseForwardConfig `yaml:"reverse_forward,omitempty"`
+	Firewall       FirewallConfig       `yaml:"firewall,omitempty"`
 }
 
 type Mount struct {

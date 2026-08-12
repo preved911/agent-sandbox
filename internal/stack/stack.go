@@ -245,14 +245,14 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 	networkName := sandbox.ResourceName(s.hash, sandbox.SuffixNet)
 
 	// Ensure firewall image exists (auto-build from embedded files if missing)
-	imageTag, err := firewall.EnsureFirewallImage(ctx, s.cli, s.config.Firewall.Image)
+	imageTag, err := firewall.EnsureFirewallImage(ctx, s.cli, s.config.Run.Firewall.Image)
 	if err != nil {
 		return fmt.Errorf("ensure firewall image: %w", err)
 	}
 
 	// Build firewall env vars from config
 	fw := firewall.NewFirewallContainer(s.cli, s.hash)
-	envSlice := fw.FirewallEnv(&s.config.Firewall.Network)
+	envSlice := fw.FirewallEnv(&s.config.Run.Firewall)
 
 	// Add DNAT target IP so firewall entrypoint can generate the rule.
 	envSlice = append(envSlice, "AGENT_IP="+agentIP)

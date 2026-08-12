@@ -26,7 +26,7 @@ profiles:
       entrypoint: ["opencode"]
       command: ["serve", "--hostname=0.0.0.0", "--port=4096"]
       data_dir: /root/.local/share/opencode
-      attach_cmd: "opencode attach %s"
+      attach_cmd: ["opencode", "attach", "%s"]
 
       env:
         OPENCODE_TELEMETRY: "0"
@@ -61,8 +61,7 @@ profiles:
         #   agent-sandbox run --bind 0.0.0.0
         bind: 127.0.0.1
 
-    firewall:
-      network:
+      firewall:
         default: deny
         cidr:
           allow:

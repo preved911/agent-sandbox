@@ -19,7 +19,7 @@ type DNATConfig struct {
 // Deny rules are emitted BEFORE allow rules (deny wins).
 // If dnat is non-nil, a PREROUTING DNAT rule is added to forward traffic to the agent.
 // Returns the full nftables config as a string.
-func GenerateNftablesConfig(network *config.NetworkConfig, outsideIF string, dnat *DNATConfig) string {
+func GenerateNftablesConfig(fwCfg *config.FirewallConfig, outsideIF string, dnat *DNATConfig) string {
 	var b strings.Builder
 
 	b.WriteString("#!/usr/sbin/nft -f\n\n")
@@ -49,9 +49,9 @@ func GenerateNftablesConfig(network *config.NetworkConfig, outsideIF string, dna
 	b.WriteString("        ct state invalid drop\n\n")
 
 	// DENY CIDR rules first (deny wins)
-	if network != nil && len(network.CIDR.Deny) > 0 {
+	if fwCfg != nil && len(fwCfg.CIDR.Deny) > 0 {
 		b.WriteString("        # --- DENY CIDR rules (deny wins) ---\n")
-		for _, cidr := range network.CIDR.Deny {
+		for _, cidr := range fwCfg.CIDR.Deny {
 			cidr = strings.TrimSpace(cidr)
 			if cidr != "" {
 				b.WriteString(fmt.Sprintf("        ip daddr %s drop comment \"deny-cidr\"\n", cidr))
@@ -61,9 +61,9 @@ func GenerateNftablesConfig(network *config.NetworkConfig, outsideIF string, dna
 	}
 
 	// ALLOW CIDR rules second
-	if network != nil && len(network.CIDR.Allow) > 0 {
+	if fwCfg != nil && len(fwCfg.CIDR.Allow) > 0 {
 		b.WriteString("        # --- ALLOW CIDR rules ---\n")
-		for _, cidr := range network.CIDR.Allow {
+		for _, cidr := range fwCfg.CIDR.Allow {
 			cidr = strings.TrimSpace(cidr)
 			if cidr != "" {
 				b.WriteString(fmt.Sprintf("        ip daddr %s accept comment \"allow-cidr\"\n", cidr))
@@ -75,7 +75,7 @@ func GenerateNftablesConfig(network *config.NetworkConfig, outsideIF string, dna
 	// Default policy
 	b.WriteString("        # --- Default policy ---\n")
 	defaultPolicy := "drop"
-	if network != nil && network.Default == "allow" {
+	if fwCfg != nil && fwCfg.Default == "allow" {
 		defaultPolicy = "allow"
 	}
 	if defaultPolicy == "allow" {
@@ -99,21 +99,21 @@ func GenerateNftablesConfig(network *config.NetworkConfig, outsideIF string, dna
 }
 
 // GenerateNftablesConfigWithReverse generates nftables config with DNAT rules for host→agent access.
-func GenerateNftablesConfigWithReverse(network *config.NetworkConfig, dnat *DNATConfig, outsideIF string) string {
-	return GenerateNftablesConfig(network, outsideIF, dnat)
+func GenerateNftablesConfigWithReverse(fwCfg *config.FirewallConfig, dnat *DNATConfig, outsideIF string) string {
+	return GenerateNftablesConfig(fwCfg, outsideIF, dnat)
 }
 
 // ValidateCIDRRules checks for conflicts between allow and deny CIDR lists.
 // Returns warnings for overlapping CIDRs.
-func ValidateCIDRRules(network *config.NetworkConfig) []string {
-	if network == nil {
+func ValidateCIDRRules(fwCfg *config.FirewallConfig) []string {
+	if fwCfg == nil {
 		return nil
 	}
 
 	var warnings []string
 
-	allowCIDRs := parseCIDRs(network.CIDR.Allow)
-	denyCIDRs := parseCIDRs(network.CIDR.Deny)
+	allowCIDRs := parseCIDRs(fwCfg.CIDR.Allow)
+	denyCIDRs := parseCIDRs(fwCfg.CIDR.Deny)
 
 	for _, deny := range denyCIDRs {
 		for _, allow := range allowCIDRs {

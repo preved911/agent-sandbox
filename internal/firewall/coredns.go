@@ -10,17 +10,17 @@ import (
 // GenerateCoreDNSConfig generates a CoreDNS Corefile from DNS rules.
 // Deny zones return NXDOMAIN and are checked first (deny wins).
 // Returns the full Corefile content as a string.
-func GenerateCoreDNSConfig(network *config.NetworkConfig) string {
+func GenerateCoreDNSConfig(fwCfg *config.FirewallConfig) string {
 	var b strings.Builder
 
 	dnsDefault := "deny"
 	dnsUpstream := "1.1.1.1 8.8.8.8"
-	if network != nil {
-		if network.DNS.Default != "" {
-			dnsDefault = network.DNS.Default
+	if fwCfg != nil {
+		if fwCfg.DNS.Default != "" {
+			dnsDefault = fwCfg.DNS.Default
 		}
-		if len(network.DNS.Upstream) > 0 {
-			dnsUpstream = strings.Join(network.DNS.Upstream, " ")
+		if len(fwCfg.DNS.Upstream) > 0 {
+			dnsUpstream = strings.Join(fwCfg.DNS.Upstream, " ")
 		}
 	}
 
@@ -29,9 +29,9 @@ func GenerateCoreDNSConfig(network *config.NetworkConfig) string {
 	b.WriteString("    log\n\n")
 
 	// Deny zones (deny wins — checked first)
-	if network != nil && len(network.DNS.Deny) > 0 {
+	if fwCfg != nil && len(fwCfg.DNS.Deny) > 0 {
 		b.WriteString("    # Deny zones (deny wins)\n")
-		for _, domain := range network.DNS.Deny {
+		for _, domain := range fwCfg.DNS.Deny {
 			domain = strings.TrimSpace(domain)
 			if domain != "" {
 				b.WriteString(fmt.Sprintf("    template IN ANY %s {\n", domain))
@@ -43,9 +43,9 @@ func GenerateCoreDNSConfig(network *config.NetworkConfig) string {
 	}
 
 	// Allow domains — forward to upstream
-	if network != nil && len(network.DNS.Allow) > 0 {
+	if fwCfg != nil && len(fwCfg.DNS.Allow) > 0 {
 		b.WriteString("    # Forward allowed domains to upstream\n")
-		for _, domain := range network.DNS.Allow {
+		for _, domain := range fwCfg.DNS.Allow {
 			domain = strings.TrimSpace(domain)
 			if domain != "" {
 				b.WriteString(fmt.Sprintf("    %s {\n", domain))
@@ -77,19 +77,19 @@ func GenerateCoreDNSConfig(network *config.NetworkConfig) string {
 
 // ValidateDNSRules checks for conflicts between allow and deny DNS rules.
 // Returns warnings for overlapping domains.
-func ValidateDNSRules(network *config.NetworkConfig) []string {
-	if network == nil {
+func ValidateDNSRules(fwCfg *config.FirewallConfig) []string {
+	if fwCfg == nil {
 		return nil
 	}
 
 	var warnings []string
 
-	for _, deny := range network.DNS.Deny {
+	for _, deny := range fwCfg.DNS.Deny {
 		deny = strings.TrimSpace(deny)
 		if deny == "" {
 			continue
 		}
-		for _, allow := range network.DNS.Allow {
+		for _, allow := range fwCfg.DNS.Allow {
 			allow = strings.TrimSpace(allow)
 			if allow == "" {
 				continue
