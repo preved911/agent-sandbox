@@ -2,6 +2,10 @@ package config
 
 // FirewallConfig holds network filtering rules for the sandbox.
 type FirewallConfig struct {
+	// Image overrides the default firewall image tag.
+	// If empty, uses "agent-sandbox-firewall:latest" and auto-builds if missing.
+	Image string `yaml:"image,omitempty"`
+
 	Network NetworkConfig `yaml:"network,omitempty"`
 }
 
