@@ -36,7 +36,7 @@ func TestStackNew(t *testing.T) {
 
 	// Stack.New doesn't require Docker, so we can test construction.
 	// We pass nil for cli since we're not actually calling Docker APIs.
-	s := New(nil, hash, cfg)
+	s := New(nil, hash, "/tmp/test", cfg)
 	if s == nil {
 		t.Fatal("New returned nil")
 	}

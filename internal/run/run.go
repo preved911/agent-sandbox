@@ -22,7 +22,7 @@ import (
 
 // Create creates a container named name running image without starting it.
 // The container is created on the isolated network with a fixed IP.
-func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, hash string) error {
+func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, hash, path string) error {
 	// Derive unique IPs from hash.
 	_, _, firewallIP, agentIP := sandboxnet.SubnetFromHash(hash)
 
@@ -47,7 +47,7 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 	}
 
 	name := sandbox.ResourceName(hash, sandbox.SuffixAgent)
-	labels := sandbox.DefaultLabels(hash, "", "")
+	labels := sandbox.DefaultLabels(hash, path, "")
 
 	cConf := &container.Config{
 		Image:      image,

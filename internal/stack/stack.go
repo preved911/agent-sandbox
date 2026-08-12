@@ -25,14 +25,16 @@ import (
 type Stack struct {
 	cli    *client.Client
 	hash   string
+	path   string // absolute working directory path
 	config *config.Config
 }
 
 // New creates a new stack manager.
-func New(cli *client.Client, hash string, cfg *config.Config) *Stack {
+func New(cli *client.Client, hash, path string, cfg *config.Config) *Stack {
 	return &Stack{
 		cli:    cli,
 		hash:   hash,
+		path:   path,
 		config: cfg,
 	}
 }
@@ -63,7 +65,7 @@ func (s *Stack) Create(ctx context.Context, image string) error {
 	// 4. Create agent container on the isolated network with a fixed IP.
 	// No port publishing — traffic reaches the agent via firewall DNAT.
 	log.Printf("Creating agent container...")
-	if err := run.Create(ctx, s.cli, s.config, image, s.hash); err != nil {
+	if err := run.Create(ctx, s.cli, s.config, image, s.hash, s.path); err != nil {
 		return fmt.Errorf("create agent: %w", err)
 	}
 
@@ -265,7 +267,7 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 	_, subnet, _, _ := sandboxnet.SubnetFromHash(s.hash)
 	envSlice = append(envSlice, "SUBNET="+subnet)
 
-	labels := sandbox.DefaultLabels(s.hash, "", "")
+	labels := sandbox.DefaultLabels(s.hash, s.path, "")
 	labels[sandbox.SandboxRole] = "firewall"
 
 	cConf := &container.Config{
@@ -274,25 +276,9 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 		Env:    envSlice,
 	}
 
-	// Firewall must be on TWO networks:
-	// 1. Default bridge — for port publishing to the host (internal networks don't support port bindings)
-	// 2. Isolated network — for communication with the agent container
-	nConf := &dockernet.NetworkingConfig{
-		EndpointsConfig: map[string]*dockernet.EndpointSettings{
-			"bridge": {}, // default bridge for port publishing
-			networkName: {
-				IPAMConfig: &dockernet.EndpointIPAMConfig{
-					IPv4Address: firewallIP,
-				},
-			},
-		},
-	}
-
+	// Step 1: Create firewall on default bridge only (port publishing works on bridge).
 	capAdd := []string{"NET_ADMIN", "NET_RAW"}
 
-	// Publish the agent's container port on the firewall.
-	// Host binds to 127.0.0.1:random, container listens on agent_port.
-	// Traffic flows: host → firewall:agent_port → nftables DNAT → agent:agent_port
 	containerPort := nat.Port(s.config.Run.Port.Container)
 	bindIP := s.config.Run.Port.Bind
 	if bindIP == "" {
@@ -309,8 +295,24 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 		},
 	}
 
-	_, err = s.cli.ContainerCreate(ctx, cConf, hConf, nConf, nil, fwName)
-	return err
+	_, err = s.cli.ContainerCreate(ctx, cConf, hConf, nil, nil, fwName)
+	if err != nil {
+		return fmt.Errorf("create firewall on bridge: %w", err)
+	}
+
+	// Step 2: Connect firewall to isolated network with fixed IP.
+	// Port publishing is already bound via HostConfig; adding the second
+	// network via NetworkConnect keeps the bindings intact.
+	networkEndpoint := &dockernet.EndpointSettings{
+		IPAMConfig: &dockernet.EndpointIPAMConfig{
+			IPv4Address: firewallIP,
+		},
+	}
+	if err := s.cli.NetworkConnect(ctx, networkName, fwName, networkEndpoint); err != nil {
+		return fmt.Errorf("connect firewall to isolated network: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Stack) startFirewall(ctx context.Context) error {

@@ -79,7 +79,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				}
 			}
 
-			s := stack.New(cli, hash, cfg)
+			s := stack.New(cli, hash, cwd, cfg)
 
 			// Check if stack already exists.
 			exists, err := s.Exists(ctx)

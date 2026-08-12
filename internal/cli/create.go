@@ -42,7 +42,7 @@ func newCreateCmd(rf *rootFlags) *cobra.Command {
 			}
 			defer cli.Close()
 
-			s := stack.New(cli, hash, cfg)
+			s := stack.New(cli, hash, cwd, cfg)
 
 			// Check if sandbox already exists.
 			exists, err := s.Exists(ctx)
