@@ -13,22 +13,23 @@ import (
 	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
-func newSessionsCmd(rf *rootFlags) *cobra.Command {
+func newSessionCmd(rf *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "sessions",
-		Short: "Manage sandbox session volumes",
+		Use:     "session",
+		Aliases: []string{"sessions"},
+		Short:   "Manage sandbox session volumes",
 	}
 	cmd.AddCommand(
-		newSessionsPsCmd(rf),
-		newSessionsRmCmd(rf),
+		newSessionLsCmd(rf),
+		newSessionRmCmd(rf),
 	)
 	return cmd
 }
 
-func newSessionsPsCmd(rf *rootFlags) *cobra.Command {
+func newSessionLsCmd(rf *rootFlags) *cobra.Command {
 	var quiet bool
 	cmd := &cobra.Command{
-		Use:   "ps",
+		Use:   "ls",
 		Short: "List sandbox session volumes",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -86,7 +87,7 @@ func newSessionsPsCmd(rf *rootFlags) *cobra.Command {
 	return cmd
 }
 
-func newSessionsRmCmd(rf *rootFlags) *cobra.Command {
+func newSessionRmCmd(rf *rootFlags) *cobra.Command {
 	var (
 		force bool
 		all   bool
