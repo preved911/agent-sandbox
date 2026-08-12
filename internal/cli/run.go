@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
-	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -140,22 +140,26 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			url := fmt.Sprintf("http://%s:%s", bindIP, port)
 			out := cmd.OutOrStdout()
 
-			// Wait for the agent to be ready before attaching.
+			// Wait for the opencode HTTP server to be ready before attaching.
+			// A TCP check alone is not sufficient — Docker's port forwarding
+			// accepts connections before the HTTP handler is initialized.
 			fmt.Fprintf(out, "Waiting for agent to be ready...\n")
-			deadline := time.Now().Add(30 * time.Second)
+			client := &http.Client{Timeout: 2 * time.Second}
+			deadline := time.Now().Add(60 * time.Second)
 			for time.Now().Before(deadline) {
-				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%s", bindIP, port), 2*time.Second)
+				resp, err := client.Get(url)
 				if err == nil {
-					conn.Close()
+					resp.Body.Close()
 					break
 				}
 				time.Sleep(time.Second)
 			}
 			// Final check — if still not ready, proceed anyway (attach will show error).
-			if conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%s", bindIP, port), 2*time.Second); err != nil {
-				fmt.Fprintf(out, "Warning: agent not ready after 30s, attempting attach anyway...\n")
+			resp, err := client.Get(url)
+			if err != nil {
+				fmt.Fprintf(out, "Warning: agent not ready after 60s, attempting attach anyway...\n")
 			} else {
-				conn.Close()
+				resp.Body.Close()
 				fmt.Fprintf(out, "Agent is ready.\n")
 			}
 
