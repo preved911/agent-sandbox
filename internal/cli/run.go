@@ -2,12 +2,14 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/spf13/cobra"
 
 	"github.com/preved911/agent-sandbox/internal/build"
@@ -178,10 +180,8 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				const maxAttempts = 5
 				for attempt := 1; attempt <= maxAttempts; attempt++ {
 					c := exec.CommandContext(ctx, args[0], args[1:]...)
-					c.Stdout = out
-					c.Stderr = cmd.ErrOrStderr()
-					c.Stdin = os.Stdin
-					if err := c.Run(); err != nil {
+					f, err := pty.Start(c)
+					if err != nil {
 						if attempt < maxAttempts {
 							backoff := time.Duration(attempt) * 2 * time.Second
 							fmt.Fprintf(out, "Attach failed (attempt %d/%d), retrying in %v...\n", attempt, maxAttempts, backoff)
@@ -190,7 +190,11 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 						}
 						return fmt.Errorf("attach command after %d attempts: %w", maxAttempts, err)
 					}
-					return nil
+					defer f.Close()
+					// Connect user's terminal to the PTY.
+					go io.Copy(f, os.Stdin)
+					io.Copy(os.Stdout, f)
+					return c.Wait()
 				}
 			}
 
