@@ -78,6 +78,10 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 				IPAMConfig: &dockernet.EndpointIPAMConfig{
 					IPv4Address: agentIP,
 				},
+				// Route all agent traffic through the firewall.
+				// Without this, Docker defaults to the bridge gateway (10.x.x.1)
+				// which bypasses the firewall's nftables rules.
+				Gateway: firewallIP,
 			},
 		},
 	}
@@ -147,6 +151,7 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 				IPAMConfig: &dockernet.EndpointIPAMConfig{
 					IPv4Address: agentIP,
 				},
+				Gateway: firewallIP,
 			},
 		},
 	}
