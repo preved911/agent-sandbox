@@ -222,55 +222,5 @@ COREDNS_DEFAULT
     exec tail -f /dev/null
 fi
 
-# ========================================
-# PROXY MODE — nginx reverse proxy
-# ========================================
-if [ "$MODE" = "proxy" ]; then
-    if [ -z "${AGENT_IP:-}" ] || [ -z "${AGENT_PORT:-}" ]; then
-        echo "ERROR: MODE=proxy requires AGENT_IP and AGENT_PORT env vars" >&2
-        exit 1
-    fi
-
-    AGENT_PORT_NUM=$(echo "$AGENT_PORT" | sed 's|/tcp||')
-
-    # Generate nginx config
-    cat > /etc/nginx/nginx.conf <<NGINX_EOF
-worker_processes 1;
-daemon off;
-
-events {
-    worker_connections 1024;
-}
-
-http {
-    access_log /dev/stdout;
-    error_log /dev/stderr;
-
-    server {
-        listen ${AGENT_PORT_NUM};
-
-        location / {
-            proxy_pass http://${AGENT_IP}:${AGENT_PORT_NUM};
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade \$http_upgrade;
-            proxy_set_header Connection "upgrade";
-            proxy_set_header Host \$host;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$scheme;
-            proxy_read_timeout 86400s;
-            proxy_send_timeout 86400s;
-        }
-    }
-}
-NGINX_EOF
-
-    echo "Generated nginx config:"
-    cat /etc/nginx/nginx.conf
-
-    echo "Starting nginx: 0.0.0.0:${AGENT_PORT_NUM} -> ${AGENT_IP}:${AGENT_PORT_NUM}"
-    exec nginx
-fi
-
-echo "ERROR: Unknown MODE=$MODE (expected: firewall or proxy)" >&2
+echo "ERROR: Unknown MODE=$MODE (expected: firewall)" >&2
 exit 1

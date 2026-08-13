@@ -283,7 +283,6 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 
 	fw := firewall.NewFirewallContainer(s.cli, s.hash)
 	envSlice := fw.FirewallEnv(&s.config.Run.Firewall)
-	envSlice = append(envSlice, "MODE=firewall")
 	envSlice = append(envSlice, "AGENT_IP="+agentIP)
 	envSlice = append(envSlice, "AGENT_PORT="+s.config.Run.Port.Container)
 
@@ -333,9 +332,9 @@ func (s *Stack) createProxy(ctx context.Context) error {
 
 	_, _, _, agentIP := sandboxnet.SubnetFromHash(s.hash)
 
-	imageTag, err := firewall.EnsureFirewallImage(ctx, s.cli, s.config.Run.Firewall.Image)
+	imageTag, err := firewall.EnsureProxyImage(ctx, s.cli, "")
 	if err != nil {
-		return fmt.Errorf("ensure firewall image: %w", err)
+		return fmt.Errorf("ensure proxy image: %w", err)
 	}
 
 	labels := sandbox.DefaultLabels(s.hash, s.path, "")
@@ -345,7 +344,6 @@ func (s *Stack) createProxy(ctx context.Context) error {
 		Image: imageTag,
 		Labels: labels,
 		Env: []string{
-			"MODE=proxy",
 			"AGENT_IP=" + agentIP,
 			"AGENT_PORT=" + s.config.Run.Port.Container,
 		},
