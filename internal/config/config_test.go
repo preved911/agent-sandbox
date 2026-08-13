@@ -308,6 +308,165 @@ profiles:
 	}
 }
 
+func TestLoadUnifiedRules(t *testing.T) {
+	content := `
+default_profile: default
+profiles:
+  default:
+    build:
+      dockerfile: ./Dockerfile
+    run:
+      workdir: /workspace
+      firewall:
+        default: deny
+        rules:
+          - type: allow
+            target: "0.0.0.0/0"
+          - type: block
+            target: "5.45.192.0/18"
+          - type: allow
+            target: "api.example.org"
+          - type: block
+            target: "evil.example.org"
+          - type: allow
+            target: "api.anthropic.com"
+            protocol: tcp
+            port: 443
+`
+	path := writeTempConfig(t, content)
+	cfg, err := Load(path, "")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Run.Firewall.Rules) != 5 {
+		t.Fatalf("Rules len = %d, want 5", len(cfg.Run.Firewall.Rules))
+	}
+	// Check rule types
+	if cfg.Run.Firewall.Rules[0].Type != "allow" {
+		t.Errorf("Rules[0].Type = %q, want %q", cfg.Run.Firewall.Rules[0].Type, "allow")
+	}
+	if cfg.Run.Firewall.Rules[1].Type != "block" {
+		t.Errorf("Rules[1].Type = %q, want %q", cfg.Run.Firewall.Rules[1].Type, "block")
+	}
+	// Check NormalizeRules
+	cfg.Run.Firewall.NormalizeRules()
+	if len(cfg.Run.Firewall.CIDR.Allow) != 1 {
+		t.Errorf("CIDR.Allow len = %d, want 1", len(cfg.Run.Firewall.CIDR.Allow))
+	}
+	if len(cfg.Run.Firewall.CIDR.Deny) != 1 {
+		t.Errorf("CIDR.Deny len = %d, want 1", len(cfg.Run.Firewall.CIDR.Deny))
+	}
+	if len(cfg.Run.Firewall.DNS.Allow) != 2 {
+		t.Errorf("DNS.Allow len = %d, want 2", len(cfg.Run.Firewall.DNS.Allow))
+	}
+	if len(cfg.Run.Firewall.DNS.Deny) != 1 {
+		t.Errorf("DNS.Deny len = %d, want 1", len(cfg.Run.Firewall.DNS.Deny))
+	}
+}
+
+func TestValidateRules_InvalidType(t *testing.T) {
+	cfg := &Config{
+		Run: RunConfig{
+			Port: PortConfig{Container: "4096/tcp"},
+			Firewall: FirewallConfig{
+				Rules: []Rule{
+					{Type: "invalid", Target: "10.0.0.0/8"},
+				},
+			},
+		},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid rule type")
+	}
+}
+
+func TestValidateRules_EmptyTarget(t *testing.T) {
+	cfg := &Config{
+		Run: RunConfig{
+			Port: PortConfig{Container: "4096/tcp"},
+			Firewall: FirewallConfig{
+				Rules: []Rule{
+					{Type: "allow", Target: ""},
+				},
+			},
+		},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for empty rule target")
+	}
+}
+
+func TestValidateRules_IPPortPortRange(t *testing.T) {
+	cfg := &Config{
+		Run: RunConfig{
+			Port: PortConfig{Container: "4096/tcp"},
+			Firewall: FirewallConfig{
+				Rules: []Rule{
+					{Type: "allow", Target: "1.2.3.4:443", Protocol: "tcp", Port: 443},
+				},
+			},
+		},
+	}
+	err := Validate(cfg)
+	if err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRules_InvalidProtocol(t *testing.T) {
+	cfg := &Config{
+		Run: RunConfig{
+			Port: PortConfig{Container: "4096/tcp"},
+			Firewall: FirewallConfig{
+				Rules: []Rule{
+					{Type: "allow", Target: "1.2.3.4:443", Protocol: "sctp", Port: 443},
+				},
+			},
+		},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid protocol")
+	}
+}
+
+func TestValidateRules_DenyAlias(t *testing.T) {
+	r := Rule{Type: "deny", Target: "10.0.0.0/8"}
+	if r.IsBlocked() != true {
+		t.Error("deny should be blocked")
+	}
+}
+
+func TestRuleClassification(t *testing.T) {
+	tests := []struct {
+		target string
+		isCIDR bool
+		isDNS  bool
+		isIP   bool
+	}{
+		{"10.0.0.0/8", true, false, false},
+		{"192.168.1.0/24", true, false, false},
+		{"api.example.org", false, true, false},
+		{"*.anthropic.com", false, true, false},
+		{"1.2.3.4:443", false, false, true},
+		{"10.0.0.1:8080", false, false, true},
+	}
+	for _, tt := range tests {
+		r := Rule{Target: tt.target}
+		if r.IsCIDR() != tt.isCIDR {
+			t.Errorf("IsCIDR(%q) = %v, want %v", tt.target, r.IsCIDR(), tt.isCIDR)
+		}
+		if r.IsDNS() != tt.isDNS {
+			t.Errorf("IsDNS(%q) = %v, want %v", tt.target, r.IsDNS(), tt.isDNS)
+		}
+		if r.IsIPPort() != tt.isIP {
+			t.Errorf("IsIPPort(%q) = %v, want %v", tt.target, r.IsIPPort(), tt.isIP)
+		}
+	}
+}
+
 func TestBaseDir(t *testing.T) {
 	content := `
 profiles:

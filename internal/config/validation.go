@@ -57,11 +57,18 @@ func validateFirewall(f *FirewallConfig) error {
 	if err := validateDefaultPolicy(f.Default, "firewall.default"); err != nil {
 		return err
 	}
-	if err := validateCIDRRules(&f.CIDR); err != nil {
+	// Validate unified rules if present
+	if err := validateRules(f.Rules); err != nil {
 		return err
 	}
-	if err := validateDNSRules(&f.DNS); err != nil {
-		return err
+	// Validate legacy fields (only if Rules is empty)
+	if len(f.Rules) == 0 {
+		if err := validateCIDRRules(&f.CIDR); err != nil {
+			return err
+		}
+		if err := validateDNSRules(&f.DNS); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -159,6 +166,48 @@ func validateDNSRules(r *DNSRules) error {
 		}
 	}
 
+	return nil
+}
+
+func validateRules(rules []Rule) error {
+	for i, r := range rules {
+		// Normalize type
+		r.Type = normalizeRuleType(r.Type)
+		if r.Type != "allow" && r.Type != "block" {
+			return fmt.Errorf("rules[%d].type: invalid value %q, must be \"allow\" or \"block\"", i, r.Type)
+		}
+		if r.Target == "" {
+			return fmt.Errorf("rules[%d].target: required", i)
+		}
+		// Validate target format
+		switch {
+		case r.IsCIDR():
+			if _, _, err := net.ParseCIDR(r.Target); err != nil {
+				return fmt.Errorf("rules[%d].target: invalid CIDR %q: %w", i, r.Target, err)
+			}
+		case r.IsIPPort():
+			parts := strings.SplitN(r.Target, ":", 2)
+			if net.ParseIP(parts[0]) == nil {
+				return fmt.Errorf("rules[%d].target: invalid IP %q", i, parts[0])
+			}
+			// Validate port range
+			if r.Port < 1 || r.Port > 65535 {
+				return fmt.Errorf("rules[%d].port: %d out of range (1-65535)", i, r.Port)
+			}
+		case r.IsDNS():
+			// DNS names with globs are valid — no strict validation needed
+		default:
+			return fmt.Errorf("rules[%d].target: unrecognized format %q (expected CIDR, DNS name, or IP:port)", i, r.Target)
+		}
+		// Validate protocol for IP:port rules
+		if r.IsIPPort() && r.Protocol != "" {
+			switch r.Protocol {
+			case "tcp", "udp":
+			default:
+				return fmt.Errorf("rules[%d].protocol: invalid value %q, must be \"tcp\" or \"udp\"", i, r.Protocol)
+			}
+		}
+	}
 	return nil
 }
 
