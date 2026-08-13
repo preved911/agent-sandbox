@@ -33,11 +33,13 @@ const SandboxRole = "agent-sandbox.role"
 //
 //	Agent container:  agent-sandbox-<hash>-agent
 //	Firewall container: agent-sandbox-<hash>-firewall
+//	Proxy container:  agent-sandbox-<hash>-proxy
 //	Sessions volume:  agent-sandbox-<hash>-sessions
 //	Isolated network: agent-sandbox-<hash>-net
 const (
 	SuffixAgent    = "-agent"
 	SuffixFirewall = "-firewall"
+	SuffixProxy    = "-proxy"
 	SuffixSessions = "-sessions"
 	SuffixNet      = "-net"
 )
