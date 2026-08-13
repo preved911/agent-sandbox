@@ -261,16 +261,51 @@ coredns -conf /etc/coredns/Corefile &
 COREDNS_PID=$!
 echo "CoreDNS started (PID=$COREDNS_PID)"
 
-# --- Start socat port forwarder ---
-# Docker's user-space proxy (docker-proxy) terminates TCP connections before
-# nftables PREROUTING, so DNAT rules never see the packets. socat listens on
-# the published port inside the firewall container and forwards to the agent.
+# --- Start nginx reverse proxy ---
+# nginx handles HTTP at the application layer, unlike socat which is a raw TCP pipe.
+# Docker's user-space proxy (docker-proxy) connects to nginx, which proxies to the agent.
 if [ -n "${AGENT_IP:-}" ] && [ -n "${AGENT_PORT:-}" ]; then
     AGENT_PORT_NUM=$(echo "$AGENT_PORT" | sed 's|/tcp||')
-    echo "Starting socat: 0.0.0.0:${AGENT_PORT_NUM} -> ${AGENT_IP}:${AGENT_PORT_NUM}"
-    socat TCP-LISTEN:${AGENT_PORT_NUM},fork,reuseaddr,bind=0.0.0.0 TCP:${AGENT_IP}:${AGENT_PORT_NUM} &
-    SOCAT_PID=$!
-    echo "socat started (PID=$SOCAT_PID)"
+
+    # Generate nginx config
+    cat > /etc/nginx/nginx.conf <<NGINX_EOF
+worker_processes 1;
+daemon off;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    access_log /dev/stdout;
+    error_log /dev/stderr;
+
+    server {
+        listen ${AGENT_PORT_NUM};
+
+        location / {
+            proxy_pass http://${AGENT_IP}:${AGENT_PORT_NUM};
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 86400s;
+            proxy_send_timeout 86400s;
+        }
+    }
+}
+NGINX_EOF
+
+    echo "Generated nginx config:"
+    cat /etc/nginx/nginx.conf
+
+    echo "Starting nginx: 0.0.0.0:${AGENT_PORT_NUM} -> ${AGENT_IP}:${AGENT_PORT_NUM}"
+    nginx &
+    NGINX_PID=$!
+    echo "nginx started (PID=$NGINX_PID)"
 fi
 
 # --- Health check loop ---
