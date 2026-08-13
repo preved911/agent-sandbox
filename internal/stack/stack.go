@@ -18,9 +18,10 @@ import (
 	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
-// Stack manages the 3-resource sandbox stack:
+// Stack manages the 4-resource sandbox stack:
 // - Sessions volume (durable)
-// - Firewall container (network enforcement)
+// - Firewall container (nftables + CoreDNS — traffic filtering)
+// - Proxy container (nginx — host→agent port forwarding)
 // - Agent container (opencode)
 type Stack struct {
 	cli    *client.Client
@@ -40,13 +41,8 @@ func New(cli *client.Client, hash, path string, cfg *config.Config) *Stack {
 }
 
 // Create creates the full stack without starting containers.
-// Lifecycle:
-// 1. Create sessions volume (if not exists)
-// 2. Create isolated network
-// 3. Create firewall container (with published port for host access)
-// 4. Create agent container (on isolated network only)
 func (s *Stack) Create(ctx context.Context, image string) error {
-	// 1. Sessions volume — created automatically by Docker on first use
+	// 1. Sessions volume
 	volumeName := sandbox.ResourceName(s.hash, sandbox.SuffixSessions)
 	log.Printf("Sessions volume: %s", volumeName)
 
@@ -56,14 +52,19 @@ func (s *Stack) Create(ctx context.Context, image string) error {
 		return fmt.Errorf("create network: %w", err)
 	}
 
-	// 3. Create firewall container (with published port for host→agent access)
+	// 3. Create firewall container (no published port — traffic filtering only)
 	log.Printf("Creating firewall container...")
 	if err := s.createFirewall(ctx); err != nil {
 		return fmt.Errorf("create firewall: %w", err)
 	}
 
-	// 4. Create agent container on the isolated network with a fixed IP.
-	// No port publishing — traffic reaches the agent via firewall DNAT.
+	// 4. Create proxy container (published port — nginx reverse proxy)
+	log.Printf("Creating proxy container...")
+	if err := s.createProxy(ctx); err != nil {
+		return fmt.Errorf("create proxy: %w", err)
+	}
+
+	// 5. Create agent container on the isolated network with a fixed IP.
 	log.Printf("Creating agent container...")
 	if err := run.Create(ctx, s.cli, s.config, image, s.hash, s.path); err != nil {
 		return fmt.Errorf("create agent: %w", err)
@@ -73,10 +74,6 @@ func (s *Stack) Create(ctx context.Context, image string) error {
 }
 
 // Start starts the full stack with health checks.
-// Lifecycle:
-// 1. Start firewall container
-// 2. Wait for firewall health check
-// 3. Start agent container
 func (s *Stack) Start(ctx context.Context) error {
 	// 1. Start firewall
 	log.Printf("Starting firewall container...")
@@ -92,7 +89,14 @@ func (s *Stack) Start(ctx context.Context) error {
 	}
 	log.Printf("Firewall is healthy")
 
-	// 3. Start agent
+	// 3. Start proxy
+	proxyName := sandbox.ResourceName(s.hash, sandbox.SuffixProxy)
+	log.Printf("Starting proxy container...")
+	if err := s.cli.ContainerStart(ctx, proxyName, container.StartOptions{}); err != nil {
+		return fmt.Errorf("start proxy: %w", err)
+	}
+
+	// 4. Start agent
 	log.Printf("Starting agent container...")
 	agentName := sandbox.ResourceName(s.hash, sandbox.SuffixAgent)
 	if err := s.cli.ContainerStart(ctx, agentName, container.StartOptions{}); err != nil {
@@ -102,14 +106,22 @@ func (s *Stack) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops both containers, keeps volume.
+// Stop stops all containers, keeps volume.
 func (s *Stack) Stop(ctx context.Context, timeout int) error {
+	secs := timeout
+
 	// Stop agent first
 	agentName := sandbox.ResourceName(s.hash, sandbox.SuffixAgent)
 	log.Printf("Stopping agent container...")
-	secs := timeout
 	if err := s.cli.ContainerStop(ctx, agentName, container.StopOptions{Timeout: &secs}); err != nil {
 		log.Printf("Warning: stop agent: %v", err)
+	}
+
+	// Stop proxy
+	proxyName := sandbox.ResourceName(s.hash, sandbox.SuffixProxy)
+	log.Printf("Stopping proxy container...")
+	if err := s.cli.ContainerStop(ctx, proxyName, container.StopOptions{Timeout: &secs}); err != nil {
+		log.Printf("Warning: stop proxy: %v", err)
 	}
 
 	// Stop firewall
@@ -129,6 +141,13 @@ func (s *Stack) Remove(ctx context.Context, force bool, purge bool) error {
 	log.Printf("Removing agent container...")
 	if err := s.cli.ContainerRemove(ctx, agentName, container.RemoveOptions{Force: force}); err != nil {
 		log.Printf("Warning: remove agent: %v", err)
+	}
+
+	// Remove proxy container
+	proxyName := sandbox.ResourceName(s.hash, sandbox.SuffixProxy)
+	log.Printf("Removing proxy container...")
+	if err := s.cli.ContainerRemove(ctx, proxyName, container.RemoveOptions{Force: force}); err != nil {
+		log.Printf("Warning: remove proxy: %v", err)
 	}
 
 	// Remove firewall container
@@ -156,16 +175,14 @@ func (s *Stack) Remove(ctx context.Context, force bool, purge bool) error {
 	return nil
 }
 
-// GetPort returns the published port for the firewall container.
-// The firewall's published port is used for host→agent access via nftables DNAT.
+// GetPort returns the published port for the proxy container.
 func (s *Stack) GetPort(ctx context.Context) (string, error) {
-	fwName := sandbox.ResourceName(s.hash, sandbox.SuffixFirewall)
-	resp, err := s.cli.ContainerInspect(ctx, fwName)
+	proxyName := sandbox.ResourceName(s.hash, sandbox.SuffixProxy)
+	resp, err := s.cli.ContainerInspect(ctx, proxyName)
 	if err != nil {
-		return "", fmt.Errorf("inspect firewall: %w", err)
+		return "", fmt.Errorf("inspect proxy: %w", err)
 	}
 
-	// The firewall publishes the agent's container port (e.g., 4096/tcp).
 	portKey := nat.Port(s.config.Run.Port.Container)
 	if ports, ok := resp.NetworkSettings.Ports[portKey]; ok && len(ports) > 0 {
 		return ports[0].HostPort, nil
@@ -217,6 +234,19 @@ func (s *Stack) Status(ctx context.Context) (*StackStatus, error) {
 		status.Firewall = resp.State.Status
 	}
 
+	// Proxy container
+	proxyName := sandbox.ResourceName(s.hash, sandbox.SuffixProxy)
+	resp, err = s.cli.ContainerInspect(ctx, proxyName)
+	if err != nil {
+		if client.IsErrNotFound(err) {
+			status.Proxy = "not found"
+		} else {
+			return nil, fmt.Errorf("inspect proxy: %w", err)
+		}
+	} else {
+		status.Proxy = resp.State.Status
+	}
+
 	// Network
 	exists, err := sandboxnet.Exists(ctx, s.cli, s.hash)
 	if err != nil {
@@ -235,40 +265,29 @@ func (s *Stack) Status(ctx context.Context) (*StackStatus, error) {
 type StackStatus struct {
 	Agent    string
 	Firewall string
+	Proxy    string
 	Network  string
 }
 
-// agentIP is derived from the hash — see sandboxnet.AgentIPFromHash.
-
+// createFirewall creates the firewall container (nftables + CoreDNS only, no published port).
 func (s *Stack) createFirewall(ctx context.Context) error {
 	fwName := sandbox.ResourceName(s.hash, sandbox.SuffixFirewall)
 	networkName := sandbox.ResourceName(s.hash, sandbox.SuffixNet)
 
-	// Derive unique IPs from hash.
 	_, _, firewallIP, agentIP := sandboxnet.SubnetFromHash(s.hash)
 
-	// Ensure firewall image exists (auto-build from embedded files if missing)
 	imageTag, err := firewall.EnsureFirewallImage(ctx, s.cli, s.config.Run.Firewall.Image)
 	if err != nil {
 		return fmt.Errorf("ensure firewall image: %w", err)
 	}
 
-	// Build firewall env vars from config
 	fw := firewall.NewFirewallContainer(s.cli, s.hash)
 	envSlice := fw.FirewallEnv(&s.config.Run.Firewall)
-
-	// Add DNAT target IP so firewall entrypoint can generate the rule.
 	envSlice = append(envSlice, "AGENT_IP="+agentIP)
-
-	// Add the agent's container port so firewall knows which port to DNAT.
 	envSlice = append(envSlice, "AGENT_PORT="+s.config.Run.Port.Container)
 
-	// Add subnet for SNAT rule.
 	subnet, gateway, _, _ := sandboxnet.SubnetFromHash(s.hash)
 	envSlice = append(envSlice, "SUBNET="+subnet)
-
-	// Add gateway IP so firewall can add it as secondary IP on inside interface.
-	// Agent's default route points to this gateway; firewall must respond to ARP for it.
 	envSlice = append(envSlice, "GATEWAY="+gateway)
 
 	labels := sandbox.DefaultLabels(s.hash, s.path, "")
@@ -280,9 +299,57 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 		Env:    envSlice,
 	}
 
-	// Step 1: Create firewall on default bridge only (port publishing works on bridge).
-	capAdd := []string{"NET_ADMIN", "NET_RAW"}
+	hConf := &container.HostConfig{
+		CapAdd: []string{"NET_ADMIN", "NET_RAW"},
+		RestartPolicy: container.RestartPolicy{
+			Name: container.RestartPolicyUnlessStopped,
+		},
+	}
 
+	// Create on isolated network only (no port publishing needed).
+	networkSettings := &dockernet.NetworkingConfig{
+		EndpointsConfig: map[string]*dockernet.EndpointSettings{
+			networkName: {
+				IPAMConfig: &dockernet.EndpointIPAMConfig{
+					IPv4Address: firewallIP,
+				},
+			},
+		},
+	}
+
+	_, err = s.cli.ContainerCreate(ctx, cConf, hConf, networkSettings, nil, fwName)
+	if err != nil {
+		return fmt.Errorf("create firewall: %w", err)
+	}
+
+	return nil
+}
+
+// createProxy creates the proxy container (nginx reverse proxy with published port).
+func (s *Stack) createProxy(ctx context.Context) error {
+	proxyName := sandbox.ResourceName(s.hash, sandbox.SuffixProxy)
+	networkName := sandbox.ResourceName(s.hash, sandbox.SuffixNet)
+
+	_, _, _, agentIP := sandboxnet.SubnetFromHash(s.hash)
+
+	imageTag, err := firewall.EnsureProxyImage(ctx, s.cli, "")
+	if err != nil {
+		return fmt.Errorf("ensure proxy image: %w", err)
+	}
+
+	labels := sandbox.DefaultLabels(s.hash, s.path, "")
+	labels[sandbox.SandboxRole] = "proxy"
+
+	cConf := &container.Config{
+		Image: imageTag,
+		Labels: labels,
+		Env: []string{
+			"AGENT_IP=" + agentIP,
+			"AGENT_PORT=" + s.config.Run.Port.Container,
+		},
+	}
+
+	// Port publishing — proxy listens on bridge, forwards to agent via nginx.
 	containerPort := nat.Port(s.config.Run.Port.Container)
 	bindIP := s.config.Run.Port.Bind
 	if bindIP == "" {
@@ -290,7 +357,6 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 	}
 
 	hConf := &container.HostConfig{
-		CapAdd: capAdd,
 		PortBindings: nat.PortMap{
 			containerPort: []nat.PortBinding{{HostIP: bindIP, HostPort: "0"}},
 		},
@@ -299,21 +365,16 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 		},
 	}
 
-	_, err = s.cli.ContainerCreate(ctx, cConf, hConf, nil, nil, fwName)
+	// Step 1: Create on default bridge (port publishing works on bridge).
+	_, err = s.cli.ContainerCreate(ctx, cConf, hConf, nil, nil, proxyName)
 	if err != nil {
-		return fmt.Errorf("create firewall on bridge: %w", err)
+		return fmt.Errorf("create proxy on bridge: %w", err)
 	}
 
-	// Step 2: Connect firewall to isolated network with fixed IP.
-	// Port publishing is already bound via HostConfig; adding the second
-	// network via NetworkConnect keeps the bindings intact.
-	networkEndpoint := &dockernet.EndpointSettings{
-		IPAMConfig: &dockernet.EndpointIPAMConfig{
-			IPv4Address: firewallIP,
-		},
-	}
-	if err := s.cli.NetworkConnect(ctx, networkName, fwName, networkEndpoint); err != nil {
-		return fmt.Errorf("connect firewall to isolated network: %w", err)
+	// Step 2: Connect to isolated network (to reach agent IP).
+	networkEndpoint := &dockernet.EndpointSettings{}
+	if err := s.cli.NetworkConnect(ctx, networkName, proxyName, networkEndpoint); err != nil {
+		return fmt.Errorf("connect proxy to isolated network: %w", err)
 	}
 
 	return nil

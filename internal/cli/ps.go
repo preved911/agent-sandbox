@@ -83,6 +83,7 @@ func groupByHash(containers []types.Container) []sandboxInfo {
 	type entry struct {
 		agent    *types.Container
 		firewall *types.Container
+		proxy    *types.Container
 	}
 
 	groups := make(map[string]*entry)
@@ -107,13 +108,18 @@ func groupByHash(containers []types.Container) []sandboxInfo {
 			e.agent = c
 		case "firewall":
 			e.firewall = c
+		case "proxy":
+			e.proxy = c
 		default:
 			// Legacy containers without role label — try name suffix.
 			name := strings.TrimPrefix(strings.Join(c.Names, ","), "/")
-			if strings.HasSuffix(name, sandbox.SuffixAgent) {
+			switch {
+			case strings.HasSuffix(name, sandbox.SuffixAgent):
 				e.agent = c
-			} else if strings.HasSuffix(name, sandbox.SuffixFirewall) {
+			case strings.HasSuffix(name, sandbox.SuffixFirewall):
 				e.firewall = c
+			case strings.HasSuffix(name, sandbox.SuffixProxy):
+				e.proxy = c
 			}
 		}
 
@@ -135,21 +141,22 @@ func groupByHash(containers []types.Container) []sandboxInfo {
 
 		agentUp := e.agent != nil && isRunning(e.agent)
 		firewallUp := e.firewall != nil && isRunning(e.firewall)
+		proxyUp := e.proxy != nil && isRunning(e.proxy)
 
 		switch {
-		case agentUp && firewallUp:
+		case agentUp && firewallUp && proxyUp:
 			s.status = "Running"
-		case agentUp && !firewallUp:
+		case agentUp:
 			s.status = "Degraded"
-		case !agentUp && !firewallUp:
+		case !agentUp && !firewallUp && !proxyUp:
 			s.status = "Stopped"
 		default:
 			s.status = "Partial"
 		}
 
-		// Extract published port from firewall container.
-		if e.firewall != nil {
-			for _, p := range e.firewall.Ports {
+		// Extract published port from proxy container (not firewall).
+		if e.proxy != nil {
+			for _, p := range e.proxy.Ports {
 				if p.PublicPort != 0 {
 					ip := p.IP
 					if ip == "" {

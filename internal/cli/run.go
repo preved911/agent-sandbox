@@ -205,11 +205,8 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				}
 			}
 
-			// Get the published port from the firewall container.
-			port, err := s.GetPort(ctx)
-			if err != nil {
-				return fmt.Errorf("get port: %w", err)
-			}
+			// Get the published port from the proxy container (may fail if no port published).
+			port, _ := s.GetPort(ctx)
 
 			// Determine the bind IP for the URL.
 			bindIP := cfg.Run.Port.Bind
@@ -217,7 +214,10 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				bindIP = "127.0.0.1"
 			}
 
-			url := fmt.Sprintf("http://%s:%s", bindIP, port)
+			var url string
+			if port != "" {
+				url = fmt.Sprintf("http://%s:%s", bindIP, port)
+			}
 
 			// Resolve the attach command (flag takes priority over config).
 			var cmdArgs []string
@@ -231,8 +231,9 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 		if cmdArgs != nil {
 			// Build the final args with localhost URL — the command runs
 			// inside the agent container via docker exec, so it connects
-			// to localhost:4096 where the agent service listens.
-			localURL := fmt.Sprintf("http://localhost:%s", port)
+			// to localhost:<container_port> where the agent service listens.
+			containerPort := cfg.Run.Port.Container
+			localURL := fmt.Sprintf("http://localhost:%s", containerPort)
 			args := make([]string, len(cmdArgs))
 			for i, a := range cmdArgs {
 				args[i] = strings.ReplaceAll(a, "%s", localURL)
@@ -358,7 +359,11 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			}
 		} else {
 			// No attach command configured — print URL for manual connection.
-			fmt.Fprintf(out, "\nSandbox ready. Connect manually:\n  %s\n", url)
+			if url != "" {
+				fmt.Fprintf(out, "\nSandbox ready. Connect manually:\n  %s\n", url)
+			} else {
+				fmt.Fprintf(out, "\nSandbox ready. No published port — connect via docker exec.\n")
+			}
 		}
 		return nil
 	},
