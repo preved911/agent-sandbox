@@ -93,11 +93,12 @@ func GenerateNftablesConfig(fwCfg *config.FirewallConfig, dnat *DNATConfig, subn
 	b.WriteString("    chain postrouting {\n")
 	b.WriteString("        type nat hook postrouting priority 100;\n\n")
 	b.WriteString("        # SNAT outbound traffic from agent to internet\n")
+	b.WriteString("        # Exclude intra-subnet traffic (e.g. firewall socat → agent)\n")
 	if subnet != "" {
-		b.WriteString(fmt.Sprintf("        ip saddr %s masquerade\n", subnet))
+		b.WriteString(fmt.Sprintf("        ip saddr %s ip daddr != %s masquerade\n", subnet, subnet))
 	} else {
 		// Fallback for tests — use a generic private range
-		b.WriteString("        ip saddr 10.0.0.0/8 masquerade\n")
+		b.WriteString("        ip saddr 10.0.0.0/8 ip daddr != 10.0.0.0/8 masquerade\n")
 	}
 	b.WriteString("    }\n")
 

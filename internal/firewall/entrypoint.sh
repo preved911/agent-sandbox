@@ -170,7 +170,8 @@ cat >> /etc/nftables.conf <<NFTABLES_EOF
         type nat hook postrouting priority 100;
 
         # SNAT outbound traffic from agent to internet
-        ip saddr ${SUBNET:-10.0.0.0/8} masquerade
+        # Exclude intra-subnet traffic (e.g. firewall socat → agent)
+        ip saddr ${SUBNET:-10.0.0.0/8} ip daddr != ${SUBNET:-10.0.0.0/8} masquerade
     }
 }
 NFTABLES_EOF

@@ -60,16 +60,16 @@ func TestGenerateNftablesConfig_DefaultAllow(t *testing.T) {
 func TestGenerateNftablesConfig_SNAT(t *testing.T) {
 	cfg := GenerateNftablesConfig(nil, nil, "10.161.0.0/24")
 
-	if !strings.Contains(cfg, "ip saddr 10.161.0.0/24 masquerade") {
-		t.Error("expected SNAT rule for agent subnet")
+	if !strings.Contains(cfg, "ip saddr 10.161.0.0/24 ip daddr != 10.161.0.0/24 masquerade") {
+		t.Error("expected SNAT rule with intra-subnet exclusion for agent subnet")
 	}
 }
 
 func TestGenerateNftablesConfig_SNATFallback(t *testing.T) {
 	cfg := GenerateNftablesConfig(nil, nil, "")
 
-	if !strings.Contains(cfg, "ip saddr 10.0.0.0/8 masquerade") {
-		t.Error("expected fallback SNAT rule")
+	if !strings.Contains(cfg, "ip saddr 10.0.0.0/8 ip daddr != 10.0.0.0/8 masquerade") {
+		t.Error("expected fallback SNAT rule with intra-subnet exclusion")
 	}
 }
 
