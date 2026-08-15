@@ -62,16 +62,17 @@ profiles:
         bind: 127.0.0.1
 
       firewall:
-        default: deny
-        cidr:
-          allow:
-            - 10.0.0.0/8        # private network
-            - 172.16.0.0/12     # private network
-          deny: []
-        dns:
-          default: allow
-          allow: []
-          deny: []
+        default: allow
+        rules:
+          - type: allow
+            target: "0.0.0.0/0"        # allow all outbound
+          - type: block
+            target: "5.45.192.0/18"    # block specific subnet
+          - type: allow
+            target: "*.anthropic.com"  # allow anthropic domains
+          - type: block
+            target: "evil.example.org" # block specific domain
+        dns_config:
           upstream:
             - 1.1.1.1
             - 8.8.8.8

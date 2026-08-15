@@ -2,3 +2,19 @@
 
 /container-sandbox
 *.local.yaml
+
+# OpenCode session files
+.omo/
+
+# Temporary files
+PR_DESCRIPTION.md
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/

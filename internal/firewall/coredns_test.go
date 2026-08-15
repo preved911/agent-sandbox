@@ -9,40 +9,41 @@ import (
 
 func TestGenerateCoreDNSConfig_DenyBeforeAllow(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Allow: []string{"anthropic.com", "*.github.com"},
-			Deny:  []string{"evil.anthropic.com"},
+		Rules: []config.Rule{
+			{Type: "allow", Target: "anthropic.com"},
+			{Type: "allow", Target: "*.github.com"},
+			{Type: "block", Target: "evil.anthropic.com"},
 		},
 	}
 
 	cfg := GenerateCoreDNSConfig(network)
 
-	// Deny template must appear before allow forward
-	denyIdx := strings.Index(cfg, "template IN ANY evil.anthropic.com")
-	allowIdx := strings.Index(cfg, "anthropic.com {")
+	// Per-zone server blocks: deny zone block must appear before allow zone block
+	denyIdx := strings.Index(cfg, "evil.anthropic.com:53 {")
+	allowIdx := strings.Index(cfg, "anthropic.com:53 {")
 
 	if denyIdx < 0 {
-		t.Error("deny domain template not found")
+		t.Error("deny zone server block not found")
 	}
 	if allowIdx < 0 {
-		t.Error("allow domain forward not found")
+		t.Error("allow zone server block not found")
 	}
 	if denyIdx >= allowIdx {
-		t.Errorf("deny domain (pos=%d) must come before allow domain (pos=%d)", denyIdx, allowIdx)
+		t.Errorf("deny zone (pos=%d) must come before allow zone (pos=%d)", denyIdx, allowIdx)
 	}
 }
 
 func TestGenerateCoreDNSConfig_DenyReturnsNXDOMAIN(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Deny: []string{"blocked.com"},
+		Rules: []config.Rule{
+			{Type: "block", Target: "blocked.com"},
 		},
 	}
 
 	cfg := GenerateCoreDNSConfig(network)
 
-	if !strings.Contains(cfg, "template IN ANY blocked.com") {
-		t.Error("expected deny template for blocked.com")
+	if !strings.Contains(cfg, "blocked.com:53 {") {
+		t.Error("expected deny zone server block for blocked.com")
 	}
 	if !strings.Contains(cfg, "rcode NXDOMAIN") {
 		t.Error("expected NXDOMAIN rcode for denied domains")
@@ -51,16 +52,18 @@ func TestGenerateCoreDNSConfig_DenyReturnsNXDOMAIN(t *testing.T) {
 
 func TestGenerateCoreDNSConfig_AllowForwardsUpstream(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Allow:   []string{"api.anthropic.com"},
+		Rules: []config.Rule{
+			{Type: "allow", Target: "api.anthropic.com"},
+		},
+		DNSConfig: config.DNSConfig{
 			Upstream: []string{"1.1.1.1", "8.8.8.8"},
 		},
 	}
 
 	cfg := GenerateCoreDNSConfig(network)
 
-	if !strings.Contains(cfg, "api.anthropic.com {") {
-		t.Error("expected allow domain block")
+	if !strings.Contains(cfg, "api.anthropic.com:53 {") {
+		t.Error("expected allow zone server block")
 	}
 	if !strings.Contains(cfg, "forward . 1.1.1.1 8.8.8.8") {
 		t.Error("expected forward to upstream resolvers")
@@ -69,9 +72,7 @@ func TestGenerateCoreDNSConfig_AllowForwardsUpstream(t *testing.T) {
 
 func TestGenerateCoreDNSConfig_DefaultDeny(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Default: "deny",
-		},
+		Default: "deny",
 	}
 
 	cfg := GenerateCoreDNSConfig(network)
@@ -84,8 +85,8 @@ func TestGenerateCoreDNSConfig_DefaultDeny(t *testing.T) {
 
 func TestGenerateCoreDNSConfig_DefaultAllow(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Default:  "allow",
+		Default:  "allow",
+		DNSConfig: config.DNSConfig{
 			Upstream: []string{"1.1.1.1"},
 		},
 	}
@@ -112,9 +113,9 @@ func TestGenerateCoreDNSConfig_NilNetwork(t *testing.T) {
 
 func TestValidateDNSRules_NoConflict(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Allow: []string{"anthropic.com"},
-			Deny:  []string{"evil.com"},
+		Rules: []config.Rule{
+			{Type: "allow", Target: "anthropic.com"},
+			{Type: "block", Target: "evil.com"},
 		},
 	}
 
@@ -126,9 +127,9 @@ func TestValidateDNSRules_NoConflict(t *testing.T) {
 
 func TestValidateDNSRules_ExactConflict(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Allow: []string{"foo.com"},
-			Deny:  []string{"foo.com"},
+		Rules: []config.Rule{
+			{Type: "allow", Target: "foo.com"},
+			{Type: "block", Target: "foo.com"},
 		},
 	}
 
@@ -140,9 +141,9 @@ func TestValidateDNSRules_ExactConflict(t *testing.T) {
 
 func TestValidateDNSRules_WildcardConflict(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Allow: []string{"*.anthropic.com"},
-			Deny:  []string{"evil.anthropic.com"},
+		Rules: []config.Rule{
+			{Type: "allow", Target: "*.anthropic.com"},
+			{Type: "block", Target: "evil.anthropic.com"},
 		},
 	}
 

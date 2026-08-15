@@ -50,8 +50,12 @@ profiles:
         bind: 127.0.0.1
       firewall:
         default: deny
-        dns:
-          default: allow
+        rules:
+          - type: allow
+            target: "*.github.com"
+          - type: allow
+            target: "*.anthropic.com"
+        dns_config:
           upstream: [1.1.1.1, 8.8.8.8]
 
   node-dev:
@@ -85,6 +89,10 @@ profiles:
         bind: 127.0.0.1
       firewall:
         default: deny
-        dns:
-          default: allow
+        rules:
+          - type: allow
+            target: "*.npmjs.org"
+          - type: allow
+            target: "*.github.com"
+        dns_config:
           upstream: [1.1.1.1, 8.8.8.8]
