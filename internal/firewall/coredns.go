@@ -7,11 +7,19 @@ import (
 	"github.com/preved911/agent-sandbox/internal/config"
 )
 
-// GenerateCoreDNSConfig generates a CoreDNS Corefile from DNS rules.
-// Deny zones return NXDOMAIN and are checked first (deny wins).
-// Returns the full Corefile content as a string.
+// GenerateCoreDNSConfig generates a CoreDNS Corefile from the unified firewall
+// rules. It expects a config that has passed ValidateFirewall; legacy DNS
+// lists are converted via NormalizeRules if Rules is still empty.
+//
+// The Corefile uses one server block per zone so CoreDNS routes each query to
+// the most specific zone: a deny zone returns NXDOMAIN (template plugin), an
+// allow zone forwards to upstream, and the root zone applies the default
+// policy. A zone listed in both allow and deny is emitted as deny only
+// (duplicate zone blocks are a CoreDNS startup error).
 func GenerateCoreDNSConfig(fwCfg *config.FirewallConfig) string {
-	var b strings.Builder
+	if fwCfg != nil {
+		fwCfg.NormalizeRules()
+	}
 
 	dnsDefault := "deny"
 	dnsUpstream := "1.1.1.1 8.8.8.8"
@@ -24,52 +32,58 @@ func GenerateCoreDNSConfig(fwCfg *config.FirewallConfig) string {
 		}
 	}
 
+	var denyZones, allowZones []string
+	if fwCfg != nil {
+		for _, r := range fwCfg.Rules {
+			r.Target = strings.TrimSpace(r.Target)
+			if r.Target == "" || r.IsCIDR() {
+				continue
+			}
+			if r.IsBlocked() {
+				denyZones = append(denyZones, r.Target)
+			} else {
+				allowZones = append(allowZones, r.Target)
+			}
+		}
+	}
+
+	denied := make(map[string]bool, len(denyZones))
+	for _, z := range denyZones {
+		denied[strings.ToLower(z)] = true
+	}
+
+	var b strings.Builder
+
+	for _, zone := range denyZones {
+		b.WriteString(fmt.Sprintf("%s:53 {\n", zone))
+		b.WriteString("    errors\n")
+		b.WriteString("    template IN ANY . {\n")
+		b.WriteString("        rcode NXDOMAIN\n")
+		b.WriteString("    }\n")
+		b.WriteString("}\n\n")
+	}
+
+	for _, zone := range allowZones {
+		if denied[strings.ToLower(zone)] {
+			continue // deny wins; duplicate zone blocks are a CoreDNS error
+		}
+		b.WriteString(fmt.Sprintf("%s:53 {\n", zone))
+		b.WriteString("    errors\n")
+		b.WriteString("    log\n")
+		b.WriteString(fmt.Sprintf("    forward . %s\n", dnsUpstream))
+		b.WriteString("}\n\n")
+	}
+
 	b.WriteString(".:53 {\n")
 	b.WriteString("    errors\n")
-	b.WriteString("    log\n\n")
-
-	// Deny zones (deny wins — checked first)
-	if fwCfg != nil && len(fwCfg.DNS.Deny) > 0 {
-		b.WriteString("    # Deny zones (deny wins)\n")
-		for _, domain := range fwCfg.DNS.Deny {
-			domain = strings.TrimSpace(domain)
-			if domain != "" {
-				b.WriteString(fmt.Sprintf("    template IN ANY %s {\n", domain))
-				b.WriteString("        rcode NXDOMAIN\n")
-				b.WriteString("    }\n")
-			}
-		}
-		b.WriteString("\n")
-	}
-
-	// Allow domains — forward to upstream
-	if fwCfg != nil && len(fwCfg.DNS.Allow) > 0 {
-		b.WriteString("    # Forward allowed domains to upstream\n")
-		for _, domain := range fwCfg.DNS.Allow {
-			domain = strings.TrimSpace(domain)
-			if domain != "" {
-				b.WriteString(fmt.Sprintf("    %s {\n", domain))
-				b.WriteString(fmt.Sprintf("        forward . %s\n", dnsUpstream))
-				b.WriteString("    }\n")
-			}
-		}
-		b.WriteString("\n")
-	}
-
-	// Default policy
-	b.WriteString("    # Default policy\n")
+	b.WriteString("    log\n")
 	if dnsDefault == "allow" {
-		b.WriteString("    . {\n")
-		b.WriteString(fmt.Sprintf("        forward . %s\n", dnsUpstream))
-		b.WriteString("    }\n")
+		b.WriteString(fmt.Sprintf("    forward . %s\n", dnsUpstream))
 	} else {
-		b.WriteString("    . {\n")
-		b.WriteString("        template IN ANY {\n")
-		b.WriteString("            rcode NXDOMAIN\n")
-		b.WriteString("        }\n")
+		b.WriteString("    template IN ANY . {\n")
+		b.WriteString("        rcode NXDOMAIN\n")
 		b.WriteString("    }\n")
 	}
-
 	b.WriteString("}\n")
 
 	return b.String()
@@ -81,26 +95,30 @@ func ValidateDNSRules(fwCfg *config.FirewallConfig) []string {
 	if fwCfg == nil {
 		return nil
 	}
+	fwCfg.NormalizeRules()
 
-	var warnings []string
-
-	for _, deny := range fwCfg.DNS.Deny {
-		deny = strings.TrimSpace(deny)
-		if deny == "" {
+	var allows, denies []string
+	for _, r := range fwCfg.Rules {
+		r.Target = strings.TrimSpace(r.Target)
+		if r.Target == "" || r.IsCIDR() {
 			continue
 		}
-		for _, allow := range fwCfg.DNS.Allow {
-			allow = strings.TrimSpace(allow)
-			if allow == "" {
-				continue
-			}
+		if r.IsBlocked() {
+			denies = append(denies, r.Target)
+		} else {
+			allows = append(allows, r.Target)
+		}
+	}
+
+	var warnings []string
+	for _, deny := range denies {
+		for _, allow := range allows {
 			if domainsOverlap(deny, allow) {
 				warnings = append(warnings,
 					fmt.Sprintf("DNS conflict: %s (allow) overlaps with %s (deny) — deny wins", allow, deny))
 			}
 		}
 	}
-
 	return warnings
 }
 
@@ -109,8 +127,9 @@ func ValidateDNSRules(fwCfg *config.FirewallConfig) []string {
 // Wildcard: "*.foo.com" overlaps "sub.foo.com".
 // Subdomain: "foo.com" overlaps "bar.foo.com".
 func domainsOverlap(a, b string) bool {
-	a = strings.TrimSuffix(a, ".")
-	b = strings.TrimSuffix(b, ".")
+	// DNS names are case-insensitive.
+	a = strings.ToLower(strings.TrimSuffix(a, "."))
+	b = strings.ToLower(strings.TrimSuffix(b, "."))
 
 	// Exact match
 	if a == b {

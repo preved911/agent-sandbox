@@ -76,6 +76,9 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 			if bindOverride != "" {
 				cfg.Run.Port.Bind = bindOverride
 			}
+			if err := config.ValidateFirewall(&cfg.Run.Firewall); err != nil {
+				return fmt.Errorf("firewall: %w", err)
+			}
 
 			ctx := cmd.Context()
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/docker/docker/client"
 
@@ -39,44 +40,56 @@ func (f *FirewallContainer) GenerateCoreDNS(fwCfg *config.FirewallConfig) string
 
 // ValidateConfig validates the firewall configuration and logs warnings.
 func (f *FirewallContainer) ValidateConfig(fwCfg *config.FirewallConfig) {
-	warnings := ValidateCIDRRules(fwCfg)
-	for _, w := range warnings {
+	for _, w := range ValidateCIDRRules(fwCfg) {
 		log.Printf("WARNING: %s", w)
 	}
-
-	dnsWarnings := ValidateDNSRules(fwCfg)
-	for _, w := range dnsWarnings {
+	for _, w := range ValidateDNSRules(fwCfg) {
 		log.Printf("WARNING: %s", w)
 	}
 }
 
 // FirewallEnv returns environment variables for the firewall container.
+//
+// FIREWALL_RULES carries the unified rule list, one rule per line with
+// pipe-separated fields, consumed by entrypoint.sh (nftables + CoreDNS
+// generation) and the dns-pin daemon:
+//
+//	<type>|<target>|<protocol>|<canonical ports>|<dns set name>
+//
+// The dns set name field is non-empty only for DNS allow rules when IP pinning
+// is enabled. Port specs must already be canonical (ValidateFirewall does this).
 func (f *FirewallContainer) FirewallEnv(fwCfg *config.FirewallConfig) []string {
 	var env []string
+	if fwCfg == nil {
+		return env
+	}
+	fwCfg.NormalizeRules()
 
-	if fwCfg != nil {
-		// CIDR rules
-		if len(fwCfg.CIDR.Allow) > 0 {
-			env = append(env, fmt.Sprintf("ALLOW_CIDRS=%s", joinStrings(fwCfg.CIDR.Allow)))
+	var b strings.Builder
+	for _, r := range fwCfg.Rules {
+		if r.Target == "" {
+			continue
 		}
-		if len(fwCfg.CIDR.Deny) > 0 {
-			env = append(env, fmt.Sprintf("DENY_CIDRS=%s", joinStrings(fwCfg.CIDR.Deny)))
+		set := ""
+		if r.IsAllowed() && !r.IsCIDR() && fwCfg.PinResolved() {
+			set = config.DNSSetName(r.Ports)
 		}
-		env = append(env, fmt.Sprintf("NETWORK_DEFAULT=%s", defaultStr(fwCfg.Default, "deny")))
-
-		// DNS rules
-		if len(fwCfg.DNS.Allow) > 0 {
-			env = append(env, fmt.Sprintf("ALLOW_DOMAINS=%s", joinStrings(fwCfg.DNS.Allow)))
-		}
-		if len(fwCfg.DNS.Deny) > 0 {
-			env = append(env, fmt.Sprintf("DENY_DOMAINS=%s", joinStrings(fwCfg.DNS.Deny)))
-		}
-		env = append(env, fmt.Sprintf("DNS_DEFAULT=%s", defaultStr(fwCfg.DNS.Default, "deny")))
-		if len(fwCfg.DNS.Upstream) > 0 {
-			env = append(env, fmt.Sprintf("DNS_UPSTREAM=%s", joinStrings(fwCfg.DNS.Upstream)))
-		}
+		fmt.Fprintf(&b, "%s|%s|%s|%s|%s\n", r.Type, r.Target, r.Protocol, r.Ports, set)
+	}
+	if rules := b.String(); rules != "" {
+		env = append(env, "FIREWALL_RULES="+rules)
 	}
 
+	env = append(env, "NETWORK_DEFAULT="+defaultStr(fwCfg.Default, "deny"))
+	env = append(env, "DNS_DEFAULT="+defaultStr(fwCfg.DNS.Default, "deny"))
+	if len(fwCfg.DNS.Upstream) > 0 {
+		env = append(env, "DNS_UPSTREAM="+strings.Join(fwCfg.DNS.Upstream, ","))
+	}
+	if fwCfg.PinResolved() {
+		env = append(env, "AUTO_PIN=1")
+	} else {
+		env = append(env, "AUTO_PIN=0")
+	}
 	return env
 }
 
@@ -94,17 +107,6 @@ func (f *FirewallContainer) HealthCheck(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-func joinStrings(ss []string) string {
-	result := ""
-	for i, s := range ss {
-		if i > 0 {
-			result += ","
-		}
-		result += s
-	}
-	return result
 }
 
 func defaultStr(s, fallback string) string {

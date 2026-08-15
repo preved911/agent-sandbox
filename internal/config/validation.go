@@ -53,24 +53,35 @@ func validateRun(r *RunConfig) error {
 	return nil
 }
 
+// ValidateFirewall validates and normalizes the firewall section of a config:
+// legacy CIDR/DNS lists are converted into unified Rules and port specs are
+// canonicalized in place. Callers should invoke this before generating
+// firewall env vars or nftables/CoreDNS configuration.
+func ValidateFirewall(f *FirewallConfig) error {
+	return validateFirewall(f)
+}
+
 func validateFirewall(f *FirewallConfig) error {
 	if err := validateDefaultPolicy(f.Default, "firewall.default"); err != nil {
 		return err
 	}
-	// Validate unified rules if present
-	if err := validateRules(f.Rules); err != nil {
+	if err := validateDefaultPolicy(f.DNS.Default, "dns.default"); err != nil {
 		return err
 	}
-	// Validate legacy fields (only if Rules is empty)
-	if len(f.Rules) == 0 {
-		if err := validateCIDRRules(&f.CIDR); err != nil {
-			return err
-		}
-		if err := validateDNSRules(&f.DNS); err != nil {
-			return err
+	// Validate upstream IPs
+	for _, ip := range f.DNS.Upstream {
+		if net.ParseIP(ip) == nil {
+			return fmt.Errorf("dns.upstream: invalid IP address %q", ip)
 		}
 	}
-	return nil
+	if len(f.Rules) == 0 {
+		// Legacy format: conflict advisories before conversion to unified rules.
+		warnCIDRConflicts(&f.CIDR)
+		warnDomainConflicts(&f.DNS)
+	}
+	// Convert legacy lists into unified rules (no-op when Rules is present).
+	f.NormalizeRules()
+	return validateRules(f.Rules)
 }
 
 func validateDefaultPolicy(val, field string) error {
@@ -85,16 +96,16 @@ func validateDefaultPolicy(val, field string) error {
 	}
 }
 
-func validateCIDRRules(r *CIDRRules) error {
-	// Parse and validate all CIDR strings
+// warnCIDRConflicts logs warnings for CIDRs appearing in (or overlapping
+// between) both legacy allow and deny lists; deny wins.
+func warnCIDRConflicts(r *CIDRRules) {
 	if err := validateCIDRList(r.Allow, "cidr.allow"); err != nil {
-		return err
+		log.Print("WARNING: ", err)
 	}
 	if err := validateCIDRList(r.Deny, "cidr.deny"); err != nil {
-		return err
+		log.Print("WARNING: ", err)
 	}
 
-	// Conflict detection: same CIDR in both allow and deny
 	allowSet := make(map[string]*net.IPNet, len(r.Allow))
 	for _, cidr := range r.Allow {
 		_, network, _ := net.ParseCIDR(cidr)
@@ -119,8 +130,6 @@ func validateCIDRRules(r *CIDRRules) error {
 			}
 		}
 	}
-
-	return nil
 }
 
 func validateCIDRList(cidrs []string, field string) error {
@@ -132,19 +141,9 @@ func validateCIDRList(cidrs []string, field string) error {
 	return nil
 }
 
-func validateDNSRules(r *DNSRules) error {
-	if err := validateDefaultPolicy(r.Default, "dns.default"); err != nil {
-		return err
-	}
-
-	// Validate upstream IPs
-	for _, ip := range r.Upstream {
-		if net.ParseIP(ip) == nil {
-			return fmt.Errorf("dns.upstream: invalid IP address %q", ip)
-		}
-	}
-
-	// Domain conflict detection: same domain in allow and deny
+// warnDomainConflicts logs warnings for domains appearing in both legacy
+// allow and deny lists; deny wins.
+func warnDomainConflicts(r *DNSRules) {
 	allowSet := make(map[string]bool, len(r.Allow))
 	for _, d := range r.Allow {
 		allowSet[strings.ToLower(d)] = true
@@ -165,48 +164,74 @@ func validateDNSRules(r *DNSRules) error {
 			}
 		}
 	}
-
-	return nil
 }
 
+// validateRules validates the unified rule list and canonicalizes port specs
+// in place: after validation, rule.Ports holds the canonical (sorted, deduped,
+// disjoint) string form that drives nftables emission and named-set naming.
 func validateRules(rules []Rule) error {
-	for i, r := range rules {
-		// Normalize type
+	seen := make(map[string]bool, len(rules))
+	for i := range rules {
+		r := &rules[i]
 		r.Type = normalizeRuleType(r.Type)
 		if r.Type != "allow" && r.Type != "block" {
 			return fmt.Errorf("rules[%d].type: invalid value %q, must be \"allow\" or \"block\"", i, r.Type)
 		}
+		r.Target = strings.TrimSpace(r.Target)
 		if r.Target == "" {
 			return fmt.Errorf("rules[%d].target: required", i)
 		}
-		// Validate target format
-		switch {
-		case r.IsCIDR():
-			if _, _, err := net.ParseCIDR(r.Target); err != nil {
-				return fmt.Errorf("rules[%d].target: invalid CIDR %q: %w", i, r.Target, err)
-			}
-		case r.IsIPPort():
-			parts := strings.SplitN(r.Target, ":", 2)
-			if net.ParseIP(parts[0]) == nil {
-				return fmt.Errorf("rules[%d].target: invalid IP %q", i, parts[0])
-			}
-			// Validate port range
-			if r.Port < 1 || r.Port > 65535 {
-				return fmt.Errorf("rules[%d].port: %d out of range (1-65535)", i, r.Port)
-			}
-		case r.IsDNS():
-			// DNS names with globs are valid — no strict validation needed
-		default:
-			return fmt.Errorf("rules[%d].target: unrecognized format %q (expected CIDR, DNS name, or IP:port)", i, r.Target)
-		}
-		// Validate protocol for IP:port rules
-		if r.IsIPPort() && r.Protocol != "" {
+
+		if r.Protocol != "" {
 			switch r.Protocol {
 			case "tcp", "udp":
 			default:
 				return fmt.Errorf("rules[%d].protocol: invalid value %q, must be \"tcp\" or \"udp\"", i, r.Protocol)
 			}
 		}
+
+		if r.Ports != "" {
+			canonical, err := CanonicalPortSpec(r.Ports)
+			if err != nil {
+				return fmt.Errorf("rules[%d].ports (target %q): %w", i, r.Target, err)
+			}
+			r.Ports = canonical
+		}
+
+		switch {
+		case r.IsIPPort():
+			ip, port, _ := strings.Cut(r.Target, ":")
+			return fmt.Errorf("rules[%d].target: IP:port targets (%q) are not supported — use target %q with ports: %q", i, r.Target, ip, port)
+		case r.IsCIDR():
+			if err := validateIPRuleTarget(i, r.Target); err != nil {
+				return err
+			}
+		case r.IsDNS():
+			// DNS names with globs are valid — no strict validation needed.
+			key := r.Type + "\x00" + strings.ToLower(r.Target)
+			if seen[key] {
+				log.Printf("WARNING: rules[%d]: duplicate %s rule for %q — earlier rule wins", i, r.Type, r.Target)
+			}
+			seen[key] = true
+		default:
+			return fmt.Errorf("rules[%d].target: unrecognized format %q (expected CIDR, IP, or DNS name)", i, r.Target)
+		}
+	}
+	return nil
+}
+
+// validateIPRuleTarget checks that an IP/CIDR target parses and is IPv4 —
+// the nftables ruleset is generated in the `ip` family, so IPv6 targets
+// cannot be enforced and fail early with a clear message.
+func validateIPRuleTarget(i int, target string) error {
+	ip := target
+	if _, network, err := net.ParseCIDR(target); err == nil {
+		ip = network.IP.String()
+	} else if net.ParseIP(target) == nil {
+		return fmt.Errorf("rules[%d].target: invalid CIDR or IP %q", i, target)
+	}
+	if net.ParseIP(ip).To4() == nil {
+		return fmt.Errorf("rules[%d].target: IPv6 is not supported (%q)", i, target)
 	}
 	return nil
 }

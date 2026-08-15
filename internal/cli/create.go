@@ -27,6 +27,9 @@ func newCreateCmd(rf *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := config.ValidateFirewall(&cfg.Run.Firewall); err != nil {
+				return fmt.Errorf("firewall: %w", err)
+			}
 
 			ctx := cmd.Context()
 

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -173,7 +174,7 @@ func TestValidateCIDR(t *testing.T) {
 	}{
 		{"valid cidr", "10.0.0.0/8", false},
 		{"valid small cidr", "192.168.1.0/24", false},
-		{"invalid cidr", "10.0.0.0", true},
+		{"bare ip is valid", "10.0.0.0", false},
 		{"invalid mask", "10.0.0.0/33", true},
 		{"garbage", "not-an-ip", true},
 	}
@@ -331,7 +332,7 @@ profiles:
           - type: allow
             target: "api.anthropic.com"
             protocol: tcp
-            port: 443
+            ports: "443"
 `
 	path := writeTempConfig(t, content)
 	cfg, err := Load(path, "")
@@ -341,26 +342,68 @@ profiles:
 	if len(cfg.Run.Firewall.Rules) != 5 {
 		t.Fatalf("Rules len = %d, want 5", len(cfg.Run.Firewall.Rules))
 	}
-	// Check rule types
 	if cfg.Run.Firewall.Rules[0].Type != "allow" {
 		t.Errorf("Rules[0].Type = %q, want %q", cfg.Run.Firewall.Rules[0].Type, "allow")
 	}
 	if cfg.Run.Firewall.Rules[1].Type != "block" {
 		t.Errorf("Rules[1].Type = %q, want %q", cfg.Run.Firewall.Rules[1].Type, "block")
 	}
-	// Check NormalizeRules
+	last := cfg.Run.Firewall.Rules[4]
+	if last.Protocol != "tcp" || last.Ports != "443" {
+		t.Errorf("Rules[4] = protocol %q ports %q, want tcp/443", last.Protocol, last.Ports)
+	}
+
+	// NormalizeRules with unified rules leaves them in place (legacy fields unused).
 	cfg.Run.Firewall.NormalizeRules()
-	if len(cfg.Run.Firewall.CIDR.Allow) != 1 {
-		t.Errorf("CIDR.Allow len = %d, want 1", len(cfg.Run.Firewall.CIDR.Allow))
+	if len(cfg.Run.Firewall.Rules) != 5 {
+		t.Errorf("Rules len after NormalizeRules = %d, want 5", len(cfg.Run.Firewall.Rules))
 	}
-	if len(cfg.Run.Firewall.CIDR.Deny) != 1 {
-		t.Errorf("CIDR.Deny len = %d, want 1", len(cfg.Run.Firewall.CIDR.Deny))
+}
+
+func TestLoadLegacyConvertedToRules(t *testing.T) {
+	content := `
+default_profile: default
+profiles:
+  default:
+    build:
+      dockerfile: ./Dockerfile
+    run:
+      port:
+        container: 4096/tcp
+      firewall:
+        cidr:
+          allow: [10.0.0.0/8]
+          deny: [10.0.0.0/24]
+        dns:
+          allow: [anthropic.com]
+          deny: [evil.com]
+`
+	path := writeTempConfig(t, content)
+	cfg, err := Load(path, "")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
 	}
-	if len(cfg.Run.Firewall.DNS.Allow) != 2 {
-		t.Errorf("DNS.Allow len = %d, want 2", len(cfg.Run.Firewall.DNS.Allow))
+	if len(cfg.Run.Firewall.Rules) != 0 {
+		t.Fatalf("Rules len before Validate = %d, want 0", len(cfg.Run.Firewall.Rules))
 	}
-	if len(cfg.Run.Firewall.DNS.Deny) != 1 {
-		t.Errorf("DNS.Deny len = %d, want 1", len(cfg.Run.Firewall.DNS.Deny))
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	rules := cfg.Run.Firewall.Rules
+	if len(rules) != 4 {
+		t.Fatalf("Rules len after Validate = %d, want 4", len(rules))
+	}
+	want := []Rule{
+		{Type: "allow", Target: "10.0.0.0/8"},
+		{Type: "block", Target: "10.0.0.0/24"},
+		{Type: "allow", Target: "anthropic.com"},
+		{Type: "block", Target: "evil.com"},
+	}
+	for i, w := range want {
+		if rules[i] != w {
+			t.Errorf("Rules[%d] = %+v, want %+v", i, rules[i], w)
+		}
 	}
 }
 
@@ -398,20 +441,152 @@ func TestValidateRules_EmptyTarget(t *testing.T) {
 	}
 }
 
-func TestValidateRules_IPPortPortRange(t *testing.T) {
+func TestValidateRules_IPPortTargetRejected(t *testing.T) {
 	cfg := &Config{
 		Run: RunConfig{
 			Port: PortConfig{Container: "4096/tcp"},
 			Firewall: FirewallConfig{
 				Rules: []Rule{
-					{Type: "allow", Target: "1.2.3.4:443", Protocol: "tcp", Port: 443},
+					{Type: "allow", Target: "1.2.3.4:443"},
 				},
 			},
 		},
 	}
 	err := Validate(cfg)
-	if err != nil {
-		t.Fatalf("Validate() error = %v", err)
+	if err == nil {
+		t.Fatal("expected error for IP:port target")
+	}
+	if !strings.Contains(err.Error(), `use target "1.2.3.4" with ports: "443"`) {
+		t.Errorf("error should suggest the unified form: %v", err)
+	}
+}
+
+func TestValidateRules_Ports(t *testing.T) {
+	tests := []struct {
+		name    string
+		ports   string
+		want    string
+		wantErr bool
+	}{
+		{"single port", "443", "443", false},
+		{"range", "8000-8100", "8000-8100", false},
+		{"list", "80,443", "80,443", false},
+		{"mixed", "80,443,8000-8100", "80,443,8000-8100", false},
+		{"canonicalized", "443,443,80-90", "80-90,443", false},
+		{"merged", "8000-8100,8005-8015", "8000-8100", false},
+		{"unsorted", "443,80", "80,443", false},
+		{"out of range", "65536", "", true},
+		{"zero", "0", "", true},
+		{"inverted", "8100-8000", "", true},
+		{"empty item", "80,,443", "", true},
+		{"garbage", "https", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				Run: RunConfig{
+					Port: PortConfig{Container: "4096/tcp"},
+					Firewall: FirewallConfig{
+						Rules: []Rule{{Type: "allow", Target: "10.0.0.0/8", Ports: tt.ports}},
+					},
+				},
+			}
+			err := Validate(cfg)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if got := cfg.Run.Firewall.Rules[0].Ports; got != tt.want {
+				t.Errorf("Ports after Validate = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateRules_PortsErrorIncludesTarget(t *testing.T) {
+	cfg := &Config{
+		Run: RunConfig{
+			Port: PortConfig{Container: "4096/tcp"},
+			Firewall: FirewallConfig{
+				Rules: []Rule{{Type: "allow", Target: "api.example.org", Ports: "8100-8000"}},
+			},
+		},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for inverted range")
+	}
+	if !strings.Contains(err.Error(), "api.example.org") {
+		t.Errorf("error should include the rule target for context: %v", err)
+	}
+}
+
+func TestLoadRules_UnquotedPorts(t *testing.T) {
+	content := `
+profiles:
+  default:
+    build:
+      dockerfile: ./Dockerfile
+    run:
+      firewall:
+        rules:
+          - type: allow
+            target: "api.example.org"
+            protocol: tcp
+            ports: 443
+`
+	_, err := Load(writeTempConfig(t, content), "")
+	if err == nil {
+		t.Fatal("expected error for unquoted ports value")
+	}
+	if !strings.Contains(err.Error(), "quote the value") {
+		t.Errorf("error should hint to quote the value: %v", err)
+	}
+}
+
+func TestLoadRules_PortList(t *testing.T) {
+	content := `
+profiles:
+  default:
+    build:
+      dockerfile: ./Dockerfile
+    run:
+      firewall:
+        rules:
+          - type: allow
+            target: "api.example.org"
+            ports: [80, 443]
+`
+	_, err := Load(writeTempConfig(t, content), "")
+	if err == nil {
+		t.Fatal("expected error for sequence ports value")
+	}
+	if !strings.Contains(err.Error(), "quote the value") {
+		t.Errorf("error should hint to quote the value: %v", err)
+	}
+}
+
+func TestLoadRules_EmptyPortsString(t *testing.T) {
+	content := `
+profiles:
+  default:
+    build:
+      dockerfile: ./Dockerfile
+    run:
+      firewall:
+        rules:
+          - type: allow
+            target: "api.example.org"
+            ports: ""
+`
+	_, err := Load(writeTempConfig(t, content), "")
+	if err == nil {
+		t.Fatal("expected error for empty ports string")
+	}
+	if !strings.Contains(err.Error(), "omit the field") {
+		t.Errorf("error should hint to omit the field: %v", err)
 	}
 }
 
@@ -421,7 +596,7 @@ func TestValidateRules_InvalidProtocol(t *testing.T) {
 			Port: PortConfig{Container: "4096/tcp"},
 			Firewall: FirewallConfig{
 				Rules: []Rule{
-					{Type: "allow", Target: "1.2.3.4:443", Protocol: "sctp", Port: 443},
+					{Type: "allow", Target: "api.example.org", Protocol: "sctp"},
 				},
 			},
 		},
@@ -429,6 +604,45 @@ func TestValidateRules_InvalidProtocol(t *testing.T) {
 	err := Validate(cfg)
 	if err == nil {
 		t.Fatal("expected error for invalid protocol")
+	}
+}
+
+func TestValidateRules_IPv6Rejected(t *testing.T) {
+	cfg := &Config{
+		Run: RunConfig{
+			Port: PortConfig{Container: "4096/tcp"},
+			Firewall: FirewallConfig{
+				Rules: []Rule{
+					{Type: "allow", Target: "2a02:6b8::/29"},
+				},
+			},
+		},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for IPv6 target")
+	}
+	if !strings.Contains(err.Error(), "IPv6 is not supported") {
+		t.Errorf("error should name IPv6: %v", err)
+	}
+}
+
+func TestValidateRules_BareIPIsCIDR(t *testing.T) {
+	cfg := &Config{
+		Run: RunConfig{
+			Port: PortConfig{Container: "4096/tcp"},
+			Firewall: FirewallConfig{
+				Rules: []Rule{
+					{Type: "allow", Target: "1.2.3.4", Ports: "443"},
+				},
+			},
+		},
+	}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if !cfg.Run.Firewall.Rules[0].IsCIDR() {
+		t.Error("bare IP target should classify as CIDR")
 	}
 }
 
@@ -448,6 +662,7 @@ func TestRuleClassification(t *testing.T) {
 	}{
 		{"10.0.0.0/8", true, false, false},
 		{"192.168.1.0/24", true, false, false},
+		{"1.2.3.4", true, false, false},
 		{"api.example.org", false, true, false},
 		{"*.anthropic.com", false, true, false},
 		{"1.2.3.4:443", false, false, true},
