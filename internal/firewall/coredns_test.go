@@ -17,18 +17,18 @@ func TestGenerateCoreDNSConfig_DenyBeforeAllow(t *testing.T) {
 
 	cfg := GenerateCoreDNSConfig(network)
 
-	// Deny template must appear before allow forward
-	denyIdx := strings.Index(cfg, "template IN ANY evil.anthropic.com")
-	allowIdx := strings.Index(cfg, "anthropic.com {")
+	// Per-zone server blocks: deny zone block must appear before allow zone block
+	denyIdx := strings.Index(cfg, "evil.anthropic.com:53 {")
+	allowIdx := strings.Index(cfg, "anthropic.com:53 {")
 
 	if denyIdx < 0 {
-		t.Error("deny domain template not found")
+		t.Error("deny zone server block not found")
 	}
 	if allowIdx < 0 {
-		t.Error("allow domain forward not found")
+		t.Error("allow zone server block not found")
 	}
 	if denyIdx >= allowIdx {
-		t.Errorf("deny domain (pos=%d) must come before allow domain (pos=%d)", denyIdx, allowIdx)
+		t.Errorf("deny zone (pos=%d) must come before allow zone (pos=%d)", denyIdx, allowIdx)
 	}
 }
 
@@ -41,8 +41,8 @@ func TestGenerateCoreDNSConfig_DenyReturnsNXDOMAIN(t *testing.T) {
 
 	cfg := GenerateCoreDNSConfig(network)
 
-	if !strings.Contains(cfg, "template IN ANY blocked.com") {
-		t.Error("expected deny template for blocked.com")
+	if !strings.Contains(cfg, "blocked.com:53 {") {
+		t.Error("expected deny zone server block for blocked.com")
 	}
 	if !strings.Contains(cfg, "rcode NXDOMAIN") {
 		t.Error("expected NXDOMAIN rcode for denied domains")
@@ -59,8 +59,8 @@ func TestGenerateCoreDNSConfig_AllowForwardsUpstream(t *testing.T) {
 
 	cfg := GenerateCoreDNSConfig(network)
 
-	if !strings.Contains(cfg, "api.anthropic.com {") {
-		t.Error("expected allow domain block")
+	if !strings.Contains(cfg, "api.anthropic.com:53 {") {
+		t.Error("expected allow zone server block")
 	}
 	if !strings.Contains(cfg, "forward . 1.1.1.1 8.8.8.8") {
 		t.Error("expected forward to upstream resolvers")
