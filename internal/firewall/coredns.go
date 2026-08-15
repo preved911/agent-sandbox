@@ -8,8 +8,7 @@ import (
 )
 
 // GenerateCoreDNSConfig generates a CoreDNS Corefile from the unified firewall
-// rules. It expects a config that has passed ValidateFirewall; legacy DNS
-// lists are converted via NormalizeRules if Rules is still empty.
+// rules. It expects a config that has passed ValidateFirewall.
 //
 // The Corefile uses one server block per zone so CoreDNS routes each query to
 // the most specific zone: a deny zone returns NXDOMAIN (template plugin), an
@@ -17,10 +16,6 @@ import (
 // policy. A zone listed in both allow and deny is emitted as deny only
 // (duplicate zone blocks are a CoreDNS startup error).
 func GenerateCoreDNSConfig(fwCfg *config.FirewallConfig) string {
-	if fwCfg != nil {
-		fwCfg.NormalizeRules()
-	}
-
 	dnsDefault := "deny"
 	dnsUpstream := "1.1.1.1 8.8.8.8"
 	if fwCfg != nil {
@@ -95,7 +90,6 @@ func ValidateDNSRules(fwCfg *config.FirewallConfig) []string {
 	if fwCfg == nil {
 		return nil
 	}
-	fwCfg.NormalizeRules()
 
 	var allows, denies []string
 	for _, r := range fwCfg.Rules {

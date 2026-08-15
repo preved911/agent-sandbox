@@ -55,19 +55,20 @@ profiles:
             container: 2375
       firewall:
         default: deny
-        cidr:
-          allow:
-            - 10.0.0.0/8
-          deny:
-            - 10.0.0.0/24
+        rules:
+          - type: allow
+            target: "10.0.0.0/8"
+          - type: block
+            target: "10.0.0.0/24"
+          - type: allow
+            target: "anthropic.com"
+          - type: allow
+            target: "*.anthropic.com"
+          - type: block
+            target: "evil.anthropic.com"
         auto_pin_resolved: true
         dns:
           default: deny
-          allow:
-            - anthropic.com
-            - "*.anthropic.com"
-          deny:
-            - evil.anthropic.com
           upstream:
             - 1.1.1.1
             - 8.8.8.8
@@ -82,17 +83,14 @@ profiles:
 	if cfg.Run.Firewall.Default != "deny" {
 		t.Errorf("Firewall.Default = %q, want %q", cfg.Run.Firewall.Default, "deny")
 	}
-	if len(cfg.Run.Firewall.CIDR.Allow) != 1 || cfg.Run.Firewall.CIDR.Allow[0] != "10.0.0.0/8" {
-		t.Errorf("Firewall.CIDR.Allow = %v, want [10.0.0.0/8]", cfg.Run.Firewall.CIDR.Allow)
+	if len(cfg.Run.Firewall.Rules) != 5 {
+		t.Errorf("Firewall.Rules len = %d, want 5", len(cfg.Run.Firewall.Rules))
 	}
-	if len(cfg.Run.Firewall.CIDR.Deny) != 1 || cfg.Run.Firewall.CIDR.Deny[0] != "10.0.0.0/24" {
-		t.Errorf("Firewall.CIDR.Deny = %v, want [10.0.0.0/24]", cfg.Run.Firewall.CIDR.Deny)
+	if cfg.Run.Firewall.Rules[0].Type != "allow" || cfg.Run.Firewall.Rules[0].Target != "10.0.0.0/8" {
+		t.Errorf("Firewall.Rules[0] = %+v, want allow 10.0.0.0/8", cfg.Run.Firewall.Rules[0])
 	}
-	if len(cfg.Run.Firewall.DNS.Allow) != 2 {
-		t.Errorf("Firewall.DNS.Allow len = %d, want 2", len(cfg.Run.Firewall.DNS.Allow))
-	}
-	if len(cfg.Run.Firewall.DNS.Deny) != 1 {
-		t.Errorf("Firewall.DNS.Deny len = %d, want 1", len(cfg.Run.Firewall.DNS.Deny))
+	if cfg.Run.Firewall.Rules[1].Type != "block" || cfg.Run.Firewall.Rules[1].Target != "10.0.0.0/24" {
+		t.Errorf("Firewall.Rules[1] = %+v, want block 10.0.0.0/24", cfg.Run.Firewall.Rules[1])
 	}
 
 	// Reverse forward
@@ -184,7 +182,7 @@ func TestValidateCIDR(t *testing.T) {
 				Run: RunConfig{
 					Port: PortConfig{Container: "4096/tcp"},
 					Firewall: FirewallConfig{
-						CIDR: CIDRRules{Allow: []string{tt.cidr}},
+						Rules: []Rule{{Type: "allow", Target: tt.cidr}},
 					},
 				},
 			}
@@ -232,7 +230,7 @@ func TestValidateDNSUpstream(t *testing.T) {
 		Run: RunConfig{
 			Port: PortConfig{Container: "4096/tcp"},
 			Firewall: FirewallConfig{
-					DNS: DNSRules{
+					DNS: DNSConfig{
 						Upstream: []string{"1.1.1.1", "not-an-ip"},
 					},
 				},
@@ -351,59 +349,6 @@ profiles:
 	last := cfg.Run.Firewall.Rules[4]
 	if last.Protocol != "tcp" || last.Ports != "443" {
 		t.Errorf("Rules[4] = protocol %q ports %q, want tcp/443", last.Protocol, last.Ports)
-	}
-
-	// NormalizeRules with unified rules leaves them in place (legacy fields unused).
-	cfg.Run.Firewall.NormalizeRules()
-	if len(cfg.Run.Firewall.Rules) != 5 {
-		t.Errorf("Rules len after NormalizeRules = %d, want 5", len(cfg.Run.Firewall.Rules))
-	}
-}
-
-func TestLoadLegacyConvertedToRules(t *testing.T) {
-	content := `
-default_profile: default
-profiles:
-  default:
-    build:
-      dockerfile: ./Dockerfile
-    run:
-      port:
-        container: 4096/tcp
-      firewall:
-        cidr:
-          allow: [10.0.0.0/8]
-          deny: [10.0.0.0/24]
-        dns:
-          allow: [anthropic.com]
-          deny: [evil.com]
-`
-	path := writeTempConfig(t, content)
-	cfg, err := Load(path, "")
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if len(cfg.Run.Firewall.Rules) != 0 {
-		t.Fatalf("Rules len before Validate = %d, want 0", len(cfg.Run.Firewall.Rules))
-	}
-	if err := Validate(cfg); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
-
-	rules := cfg.Run.Firewall.Rules
-	if len(rules) != 4 {
-		t.Fatalf("Rules len after Validate = %d, want 4", len(rules))
-	}
-	want := []Rule{
-		{Type: "allow", Target: "10.0.0.0/8"},
-		{Type: "block", Target: "10.0.0.0/24"},
-		{Type: "allow", Target: "anthropic.com"},
-		{Type: "block", Target: "evil.com"},
-	}
-	for i, w := range want {
-		if rules[i] != w {
-			t.Errorf("Rules[%d] = %+v, want %+v", i, rules[i], w)
-		}
 	}
 }
 

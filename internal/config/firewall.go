@@ -22,7 +22,6 @@ type FirewallConfig struct {
 	// Rules is the unified firewall rule list. Deny/block rules win over allow.
 	// Each rule has a target (CIDR, bare IP, or DNS name with optional glob)
 	// and optional protocol/port-spec filtering.
-	// When Rules is non-empty, CIDR and DNS rule lists are ignored.
 	Rules []Rule `yaml:"rules,omitempty"`
 
 	// AutoPinResolved controls whether IPs resolved for DNS-allowed domains are
@@ -31,12 +30,8 @@ type FirewallConfig struct {
 	// the IP layer for them.
 	AutoPinResolved *bool `yaml:"auto_pin_resolved,omitempty"`
 
-	// DNS holds resolver settings (default policy + upstream servers) used
-	// alongside both unified Rules and the legacy DNS rule lists below.
-	DNS DNSRules `yaml:"dns,omitempty"`
-
-	// CIDR holds the legacy IP-layer rule lists, used only when Rules is empty.
-	CIDR CIDRRules `yaml:"cidr,omitempty"`
+	// DNS holds resolver settings (default policy + upstream servers).
+	DNS DNSConfig `yaml:"dns,omitempty"`
 }
 
 // Rule is a single firewall rule. Deny/block rules always win over allow.
@@ -95,29 +90,12 @@ func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// CIDRRules holds legacy allow and deny lists in CIDR notation.
-// Used only when the unified Rules list is empty; converted into Rules by
-// NormalizeRules. Deny always wins: if the same range appears in both, the
-// block rule is emitted first.
-type CIDRRules struct {
-	Allow []string `yaml:"allow,omitempty"`
-	Deny  []string `yaml:"deny,omitempty"`
-}
-
-// DNSRules holds resolver settings and legacy allow and deny domain lists.
-// Default/Upstream apply in both formats; Allow/Deny are used only when the
-// unified Rules list is empty and are converted into Rules by NormalizeRules.
-type DNSRules struct {
+// DNSConfig holds resolver settings for DNS filtering.
+type DNSConfig struct {
 	// Default is the DNS policy when no allow/deny rule matches.
 	// "deny" (default) returns NXDOMAIN for everything not explicitly allowed.
 	// "allow" passes through to upstream for everything not explicitly denied.
 	Default string `yaml:"default,omitempty"`
-
-	// Allow domains that resolve (forwarded to upstream).
-	Allow []string `yaml:"allow,omitempty"`
-
-	// Deny domains that always return NXDOMAIN, wins over allow (even wildcard matches).
-	Deny []string `yaml:"deny,omitempty"`
 
 	// Upstream resolvers the firewall forwards allowlisted queries to.
 	Upstream []string `yaml:"upstream,omitempty"`
@@ -164,45 +142,6 @@ func (r Rule) IsIPPort() bool {
 // pinned into nftables named sets. Defaults to true when AutoPinResolved is nil.
 func (fwCfg *FirewallConfig) PinResolved() bool {
 	return fwCfg.AutoPinResolved == nil || *fwCfg.AutoPinResolved
-}
-
-// NormalizeRules unifies the rule set: when Rules is empty, the legacy CIDR and
-// DNS allow/deny lists are converted into equivalent Rules (backward
-// compatible); when Rules is present, each rule is trimmed and its type
-// normalized. After this call, downstream consumers (FirewallEnv, nftables and
-// CoreDNS generation) can work exclusively on Rules.
-//
-// Port specs are canonicalized by Validate (which reports errors); this method
-// is safe to call on configs that have not been validated.
-func (fwCfg *FirewallConfig) NormalizeRules() {
-	if len(fwCfg.Rules) == 0 {
-		for _, cidr := range fwCfg.CIDR.Allow {
-			if cidr = strings.TrimSpace(cidr); cidr != "" {
-				fwCfg.Rules = append(fwCfg.Rules, Rule{Type: "allow", Target: cidr})
-			}
-		}
-		for _, cidr := range fwCfg.CIDR.Deny {
-			if cidr = strings.TrimSpace(cidr); cidr != "" {
-				fwCfg.Rules = append(fwCfg.Rules, Rule{Type: "block", Target: cidr})
-			}
-		}
-		for _, domain := range fwCfg.DNS.Allow {
-			if domain = strings.TrimSpace(domain); domain != "" {
-				fwCfg.Rules = append(fwCfg.Rules, Rule{Type: "allow", Target: domain})
-			}
-		}
-		for _, domain := range fwCfg.DNS.Deny {
-			if domain = strings.TrimSpace(domain); domain != "" {
-				fwCfg.Rules = append(fwCfg.Rules, Rule{Type: "block", Target: domain})
-			}
-		}
-		return // legacy fields consumed, nothing more to normalize
-	}
-
-	for i := range fwCfg.Rules {
-		fwCfg.Rules[i].Target = strings.TrimSpace(fwCfg.Rules[i].Target)
-		fwCfg.Rules[i].Type = normalizeRuleType(fwCfg.Rules[i].Type)
-	}
 }
 
 // normalizeRuleType normalizes "deny" → "block".

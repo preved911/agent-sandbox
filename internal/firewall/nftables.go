@@ -16,9 +16,8 @@ type DNATConfig struct {
 }
 
 // GenerateNftablesConfig generates an nftables configuration from the unified
-// firewall rules. It expects a config that has passed ValidateFirewall (legacy
-// lists converted, port specs canonicalized); legacy fields are converted via
-// NormalizeRules if Rules is still empty.
+// firewall rules. It expects a config that has passed ValidateFirewall (port
+// specs canonicalized).
 //
 // Rule ordering (deny wins):
 //  1. established/related accept, invalid drop
@@ -32,10 +31,6 @@ type DNATConfig struct {
 // Uses IP-based matching (ip saddr/ip daddr) instead of interface names for
 // cross-platform compatibility (Docker Desktop for Mac names all interfaces eth0).
 func GenerateNftablesConfig(fwCfg *config.FirewallConfig, dnat *DNATConfig, subnet string) string {
-	if fwCfg != nil {
-		fwCfg.NormalizeRules()
-	}
-
 	var b strings.Builder
 	b.WriteString("#!/usr/sbin/nft -f\n\n")
 	b.WriteString("flush ruleset\n\n")
@@ -226,7 +221,6 @@ func ValidateCIDRRules(fwCfg *config.FirewallConfig) []string {
 	if fwCfg == nil {
 		return nil
 	}
-	fwCfg.NormalizeRules()
 
 	var allowCIDRs, denyCIDRs []*net.IPNet
 	for _, r := range fwCfg.Rules {

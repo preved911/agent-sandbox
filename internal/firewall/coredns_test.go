@@ -9,9 +9,10 @@ import (
 
 func TestGenerateCoreDNSConfig_DenyBeforeAllow(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Allow: []string{"anthropic.com", "*.github.com"},
-			Deny:  []string{"evil.anthropic.com"},
+		Rules: []config.Rule{
+			{Type: "allow", Target: "anthropic.com"},
+			{Type: "allow", Target: "*.github.com"},
+			{Type: "block", Target: "evil.anthropic.com"},
 		},
 	}
 
@@ -34,8 +35,8 @@ func TestGenerateCoreDNSConfig_DenyBeforeAllow(t *testing.T) {
 
 func TestGenerateCoreDNSConfig_DenyReturnsNXDOMAIN(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Deny: []string{"blocked.com"},
+		Rules: []config.Rule{
+			{Type: "block", Target: "blocked.com"},
 		},
 	}
 
@@ -51,8 +52,10 @@ func TestGenerateCoreDNSConfig_DenyReturnsNXDOMAIN(t *testing.T) {
 
 func TestGenerateCoreDNSConfig_AllowForwardsUpstream(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Allow:   []string{"api.anthropic.com"},
+		Rules: []config.Rule{
+			{Type: "allow", Target: "api.anthropic.com"},
+		},
+		DNS: config.DNSConfig{
 			Upstream: []string{"1.1.1.1", "8.8.8.8"},
 		},
 	}
@@ -69,7 +72,7 @@ func TestGenerateCoreDNSConfig_AllowForwardsUpstream(t *testing.T) {
 
 func TestGenerateCoreDNSConfig_DefaultDeny(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
+		DNS: config.DNSConfig{
 			Default: "deny",
 		},
 	}
@@ -84,7 +87,7 @@ func TestGenerateCoreDNSConfig_DefaultDeny(t *testing.T) {
 
 func TestGenerateCoreDNSConfig_DefaultAllow(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
+		DNS: config.DNSConfig{
 			Default:  "allow",
 			Upstream: []string{"1.1.1.1"},
 		},
@@ -112,9 +115,9 @@ func TestGenerateCoreDNSConfig_NilNetwork(t *testing.T) {
 
 func TestValidateDNSRules_NoConflict(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Allow: []string{"anthropic.com"},
-			Deny:  []string{"evil.com"},
+		Rules: []config.Rule{
+			{Type: "allow", Target: "anthropic.com"},
+			{Type: "block", Target: "evil.com"},
 		},
 	}
 
@@ -126,9 +129,9 @@ func TestValidateDNSRules_NoConflict(t *testing.T) {
 
 func TestValidateDNSRules_ExactConflict(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Allow: []string{"foo.com"},
-			Deny:  []string{"foo.com"},
+		Rules: []config.Rule{
+			{Type: "allow", Target: "foo.com"},
+			{Type: "block", Target: "foo.com"},
 		},
 	}
 
@@ -140,9 +143,9 @@ func TestValidateDNSRules_ExactConflict(t *testing.T) {
 
 func TestValidateDNSRules_WildcardConflict(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSRules{
-			Allow: []string{"*.anthropic.com"},
-			Deny:  []string{"evil.anthropic.com"},
+		Rules: []config.Rule{
+			{Type: "allow", Target: "*.anthropic.com"},
+			{Type: "block", Target: "evil.anthropic.com"},
 		},
 	}
 

@@ -63,7 +63,6 @@ func (f *FirewallContainer) FirewallEnv(fwCfg *config.FirewallConfig) []string {
 	if fwCfg == nil {
 		return env
 	}
-	fwCfg.NormalizeRules()
 
 	var b strings.Builder
 	for _, r := range fwCfg.Rules {

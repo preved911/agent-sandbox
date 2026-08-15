@@ -74,13 +74,6 @@ func validateFirewall(f *FirewallConfig) error {
 			return fmt.Errorf("dns.upstream: invalid IP address %q", ip)
 		}
 	}
-	if len(f.Rules) == 0 {
-		// Legacy format: conflict advisories before conversion to unified rules.
-		warnCIDRConflicts(&f.CIDR)
-		warnDomainConflicts(&f.DNS)
-	}
-	// Convert legacy lists into unified rules (no-op when Rules is present).
-	f.NormalizeRules()
 	return validateRules(f.Rules)
 }
 
@@ -93,76 +86,6 @@ func validateDefaultPolicy(val, field string) error {
 		return nil
 	default:
 		return fmt.Errorf("%s: invalid value %q, must be \"deny\" or \"allow\"", field, val)
-	}
-}
-
-// warnCIDRConflicts logs warnings for CIDRs appearing in (or overlapping
-// between) both legacy allow and deny lists; deny wins.
-func warnCIDRConflicts(r *CIDRRules) {
-	if err := validateCIDRList(r.Allow, "cidr.allow"); err != nil {
-		log.Print("WARNING: ", err)
-	}
-	if err := validateCIDRList(r.Deny, "cidr.deny"); err != nil {
-		log.Print("WARNING: ", err)
-	}
-
-	allowSet := make(map[string]*net.IPNet, len(r.Allow))
-	for _, cidr := range r.Allow {
-		_, network, _ := net.ParseCIDR(cidr)
-		allowSet[cidr] = network
-	}
-
-	for _, denyCIDR := range r.Deny {
-		_, denyNet, _ := net.ParseCIDR(denyCIDR)
-
-		// Exact match
-		if _, exists := allowSet[denyCIDR]; exists {
-			log.Printf("WARNING: CIDR %q appears in both allow and deny lists; deny wins", denyCIDR)
-			continue
-		}
-
-		// Overlap check: deny ⊂ allow or allow ⊂ deny
-		for allowCIDR, allowNet := range allowSet {
-			if denyNet != nil && allowNet != nil {
-				if denyNet.Contains(allowNet.IP) || allowNet.Contains(denyNet.IP) {
-					log.Printf("WARNING: overlapping CIDRs %q (allow) and %q (deny); deny wins", allowCIDR, denyCIDR)
-				}
-			}
-		}
-	}
-}
-
-func validateCIDRList(cidrs []string, field string) error {
-	for _, cidr := range cidrs {
-		if _, _, err := net.ParseCIDR(cidr); err != nil {
-			return fmt.Errorf("%s: invalid CIDR %q: %w", field, cidr, err)
-		}
-	}
-	return nil
-}
-
-// warnDomainConflicts logs warnings for domains appearing in both legacy
-// allow and deny lists; deny wins.
-func warnDomainConflicts(r *DNSRules) {
-	allowSet := make(map[string]bool, len(r.Allow))
-	for _, d := range r.Allow {
-		allowSet[strings.ToLower(d)] = true
-	}
-
-	for _, d := range r.Deny {
-		lower := strings.ToLower(d)
-		if allowSet[lower] {
-			log.Printf("WARNING: domain %q appears in both allow and deny lists; deny wins", d)
-			continue
-		}
-
-		// Wildcard + specific deny = info (intentional narrowing)
-		if strings.HasPrefix(d, "*.") {
-			specific := d[2:]
-			if allowSet[specific] {
-				log.Printf("INFO: deny wildcard %q narrows specific allow %q (intentional)", d, specific)
-			}
-		}
 	}
 }
 
