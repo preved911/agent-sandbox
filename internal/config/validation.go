@@ -65,13 +65,10 @@ func validateFirewall(f *FirewallConfig) error {
 	if err := validateDefaultPolicy(f.Default, "firewall.default"); err != nil {
 		return err
 	}
-	if err := validateDefaultPolicy(f.DNS.Default, "dns.default"); err != nil {
-		return err
-	}
 	// Validate upstream IPs
-	for _, ip := range f.DNS.Upstream {
+	for _, ip := range f.DNSConfig.Upstream {
 		if net.ParseIP(ip) == nil {
-			return fmt.Errorf("dns.upstream: invalid IP address %q", ip)
+			return fmt.Errorf("dns_config.upstream: invalid IP address %q", ip)
 		}
 	}
 	return validateRules(f.Rules)

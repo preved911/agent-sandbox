@@ -68,7 +68,6 @@ profiles:
             target: "evil.anthropic.com"
         auto_pin_resolved: true
         dns:
-          default: deny
           upstream:
             - 1.1.1.1
             - 8.8.8.8
@@ -230,7 +229,7 @@ func TestValidateDNSUpstream(t *testing.T) {
 		Run: RunConfig{
 			Port: PortConfig{Container: "4096/tcp"},
 			Firewall: FirewallConfig{
-					DNS: DNSConfig{
+					DNSConfig: DNSConfig{
 						Upstream: []string{"1.1.1.1", "not-an-ip"},
 					},
 				},

@@ -80,9 +80,9 @@ func (f *FirewallContainer) FirewallEnv(fwCfg *config.FirewallConfig) []string {
 	}
 
 	env = append(env, "NETWORK_DEFAULT="+defaultStr(fwCfg.Default, "deny"))
-	env = append(env, "DNS_DEFAULT="+defaultStr(fwCfg.DNS.Default, "deny"))
-	if len(fwCfg.DNS.Upstream) > 0 {
-		env = append(env, "DNS_UPSTREAM="+strings.Join(fwCfg.DNS.Upstream, ","))
+	env = append(env, "DNS_DEFAULT="+defaultStr(fwCfg.Default, "deny"))
+	if len(fwCfg.DNSConfig.Upstream) > 0 {
+		env = append(env, "DNS_UPSTREAM="+strings.Join(fwCfg.DNSConfig.Upstream, ","))
 	}
 	if fwCfg.PinResolved() {
 		env = append(env, "AUTO_PIN=1")

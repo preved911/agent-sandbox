@@ -14,9 +14,9 @@ type FirewallConfig struct {
 	// If empty, uses "agent-sandbox-firewall:latest" and auto-builds if missing.
 	Image string `yaml:"image,omitempty"`
 
-	// Default is the IP-layer policy when no rule matches.
-	// "deny" (default, secure) drops everything not explicitly allowed.
-	// "allow" (permissive) allows everything not explicitly denied.
+	// Default is the policy when no rule matches (applies to both IP and DNS layers).
+	// "deny" (default, secure) drops all traffic and returns NXDOMAIN for DNS queries.
+	// "allow" (permissive) allows all traffic and forwards all DNS queries.
 	Default string `yaml:"default,omitempty"`
 
 	// Rules is the unified firewall rule list. Deny/block rules win over allow.
@@ -30,8 +30,15 @@ type FirewallConfig struct {
 	// the IP layer for them.
 	AutoPinResolved *bool `yaml:"auto_pin_resolved,omitempty"`
 
-	// DNS holds resolver settings (default policy + upstream servers).
-	DNS DNSConfig `yaml:"dns,omitempty"`
+	// DNSConfig holds DNS resolver settings.
+	DNSConfig DNSConfig `yaml:"dns_config,omitempty"`
+}
+
+// DNSConfig holds DNS resolver configuration.
+type DNSConfig struct {
+	// Upstream is the list of upstream DNS servers to forward queries to.
+	// If empty, defaults to 1.1.1.1 and 8.8.8.8.
+	Upstream []string `yaml:"upstream,omitempty"`
 }
 
 // Rule is a single firewall rule. Deny/block rules always win over allow.
@@ -88,17 +95,6 @@ func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 	}
 	r.Ports = node.Value
 	return nil
-}
-
-// DNSConfig holds resolver settings for DNS filtering.
-type DNSConfig struct {
-	// Default is the DNS policy when no allow/deny rule matches.
-	// "deny" (default) returns NXDOMAIN for everything not explicitly allowed.
-	// "allow" passes through to upstream for everything not explicitly denied.
-	Default string `yaml:"default,omitempty"`
-
-	// Upstream resolvers the firewall forwards allowlisted queries to.
-	Upstream []string `yaml:"upstream,omitempty"`
 }
 
 // IsBlocked returns true if this is a block/deny rule.

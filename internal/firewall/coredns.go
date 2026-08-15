@@ -19,11 +19,11 @@ func GenerateCoreDNSConfig(fwCfg *config.FirewallConfig) string {
 	dnsDefault := "deny"
 	dnsUpstream := "1.1.1.1 8.8.8.8"
 	if fwCfg != nil {
-		if fwCfg.DNS.Default != "" {
-			dnsDefault = fwCfg.DNS.Default
+		if fwCfg.Default != "" {
+			dnsDefault = fwCfg.Default
 		}
-		if len(fwCfg.DNS.Upstream) > 0 {
-			dnsUpstream = strings.Join(fwCfg.DNS.Upstream, " ")
+		if len(fwCfg.DNSConfig.Upstream) > 0 {
+			dnsUpstream = strings.Join(fwCfg.DNSConfig.Upstream, " ")
 		}
 	}
 

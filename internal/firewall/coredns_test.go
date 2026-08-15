@@ -55,7 +55,7 @@ func TestGenerateCoreDNSConfig_AllowForwardsUpstream(t *testing.T) {
 		Rules: []config.Rule{
 			{Type: "allow", Target: "api.anthropic.com"},
 		},
-		DNS: config.DNSConfig{
+		DNSConfig: config.DNSConfig{
 			Upstream: []string{"1.1.1.1", "8.8.8.8"},
 		},
 	}
@@ -72,9 +72,7 @@ func TestGenerateCoreDNSConfig_AllowForwardsUpstream(t *testing.T) {
 
 func TestGenerateCoreDNSConfig_DefaultDeny(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSConfig{
-			Default: "deny",
-		},
+		Default: "deny",
 	}
 
 	cfg := GenerateCoreDNSConfig(network)
@@ -87,8 +85,8 @@ func TestGenerateCoreDNSConfig_DefaultDeny(t *testing.T) {
 
 func TestGenerateCoreDNSConfig_DefaultAllow(t *testing.T) {
 	network := &config.FirewallConfig{
-		DNS: config.DNSConfig{
-			Default:  "allow",
+		Default:  "allow",
+		DNSConfig: config.DNSConfig{
 			Upstream: []string{"1.1.1.1"},
 		},
 	}

@@ -55,8 +55,7 @@ profiles:
             target: "*.github.com"
           - type: allow
             target: "*.anthropic.com"
-        dns:
-          default: allow
+        dns_config:
           upstream: [1.1.1.1, 8.8.8.8]
 
   node-dev:
@@ -95,6 +94,5 @@ profiles:
             target: "*.npmjs.org"
           - type: allow
             target: "*.github.com"
-        dns:
-          default: allow
+        dns_config:
           upstream: [1.1.1.1, 8.8.8.8]

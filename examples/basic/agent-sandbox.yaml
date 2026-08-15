@@ -62,7 +62,7 @@ profiles:
         bind: 127.0.0.1
 
       firewall:
-        default: deny
+        default: allow
         rules:
           - type: allow
             target: "0.0.0.0/0"        # allow all outbound
@@ -72,8 +72,7 @@ profiles:
             target: "*.anthropic.com"  # allow anthropic domains
           - type: block
             target: "evil.example.org" # block specific domain
-        dns:
-          default: allow
+        dns_config:
           upstream:
             - 1.1.1.1
             - 8.8.8.8
