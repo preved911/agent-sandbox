@@ -3,7 +3,7 @@ FROM golang:1.25-alpine AS dnspin-builder
 # dns-pin is stdlib-only, so this build needs no module downloads.
 WORKDIR /src
 COPY dnspin/ ./
-RUN CGO_ENABLED=0 go build -trimpath -o /dns-pin .
+RUN CGO_ENABLED=0 GO111MODULE=off go build -trimpath -o /dns-pin .
 
 FROM alpine:3.20
 

@@ -24,6 +24,9 @@ var fwEntrypoint []byte
 //go:embed coredns/Corefile.template
 var fwCorednsTemplate []byte
 
+//go:embed dnspin/main.go
+var fwDnspinMain []byte
+
 // Embedded proxy build context files.
 
 //go:embed proxy/Dockerfile
@@ -69,7 +72,7 @@ func EnsureFirewallImage(ctx context.Context, cli *client.Client, imageTag strin
 		imageTag = DefaultFirewallImage
 	}
 
-	currentHash := buildHash(fwDockerfile, fwEntrypoint, fwCorednsTemplate)
+	currentHash := buildHash(fwDockerfile, fwEntrypoint, fwCorednsTemplate, fwDnspinMain)
 
 	// Check if image exists and hash matches
 	if imageExists(ctx, cli, imageTag) {
@@ -152,6 +155,13 @@ func writeFirewallFiles(dir string) error {
 	}
 	if err := os.WriteFile(filepath.Join(corednsDir, "Corefile.template"), fwCorednsTemplate, 0644); err != nil {
 		return fmt.Errorf("write Corefile.template: %w", err)
+	}
+	dnspinDir := filepath.Join(dir, "dnspin")
+	if err := os.MkdirAll(dnspinDir, 0755); err != nil {
+		return fmt.Errorf("create dnspin dir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dnspinDir, "main.go"), fwDnspinMain, 0644); err != nil {
+		return fmt.Errorf("write dnspin/main.go: %w", err)
 	}
 	return nil
 }
