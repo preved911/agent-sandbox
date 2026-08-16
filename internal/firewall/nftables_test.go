@@ -13,7 +13,7 @@ func TestGenerateNftablesConfig_DenyBeforeAllow(t *testing.T) {
 		Rules: []config.Rule{
 			{Type: "allow", Target: "10.0.0.0/8"},
 			{Type: "allow", Target: "192.168.0.0/16"},
-			{Type: "block", Target: "10.0.0.0/24"},
+			{Type: "deny", Target: "10.0.0.0/24"},
 		},
 	}
 
@@ -133,7 +133,7 @@ func TestValidateCIDRRules_NoConflict(t *testing.T) {
 	network := &config.FirewallConfig{
 		Rules: []config.Rule{
 			{Type: "allow", Target: "10.0.0.0/8"},
-			{Type: "block", Target: "192.168.0.0/16"},
+			{Type: "deny", Target: "192.168.0.0/16"},
 		},
 	}
 
@@ -147,7 +147,7 @@ func TestValidateCIDRRules_Conflict(t *testing.T) {
 	network := &config.FirewallConfig{
 		Rules: []config.Rule{
 			{Type: "allow", Target: "10.0.0.0/8"},
-			{Type: "block", Target: "10.0.0.0/24"},
+			{Type: "deny", Target: "10.0.0.0/24"},
 		},
 	}
 

@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Environment:
 #   FIREWALL_RULES  unified rules, one per line: type|target|protocol|ports|set
-#                   (type: allow|block, target: CIDR/IP/DNS name, protocol: tcp|udp|"",
+#                   (type: allow|deny, target: CIDR/IP/DNS name, protocol: tcp|udp/"",
 #                    ports: canonical port spec, set: nft named set for DNS allow rules)
 #   NETWORK_DEFAULT deny|allow (IP-layer default policy)
 #   DNS_DEFAULT     deny|allow (DNS default policy)
@@ -13,7 +13,7 @@ set -euo pipefail
 #   AUTO_PIN        1 to pin resolved IPs of DNS allow rules into nftables sets
 #   SUBNET / GATEWAY  sandbox network parameters
 #
-# Rule ordering in the forward chain (deny wins): block IP rules, allow IP
+# Rule ordering in the forward chain (deny wins): deny IP rules, allow IP
 # rules, DNS-resolved allow rules (@sets), default policy.
 
 MODE="${MODE:-firewall}"
@@ -91,25 +91,36 @@ if [ -n "${GATEWAY:-}" ]; then
 fi
 
 # --- Classify unified rules ---
-# is_ip_target: CIDR or bare IPv4 (host validation already rejected anything else).
+# is_ip_target: CIDR or bare IP (IPv4 or IPv6).
+# IPv4: contains dots or is a CIDR with dots
+# IPv6: contains colons
 is_ip_target() {
-    [[ "$1" == */* ]] || [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+    [[ "$1" == */* ]] || [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || [[ "$1" == *:* ]]
 }
 
-BLOCK_IP=()      # "target|proto|ports"
+# nft_addr_match: returns "ip daddr" for IPv4, "ip6 daddr" for IPv6
+nft_addr_match() {
+    if [[ "$1" == *:* ]]; then
+        echo "ip6 daddr"
+    else
+        echo "ip daddr"
+    fi
+}
+
+DENY_IP=()       # "target|proto|ports"
 ALLOW_IP=()      # "target|proto|ports"
 DNS_DENY=()      # "domain"
 DNS_ALLOW=()     # "domain|proto|ports|set"
 while IFS='|' read -r rtype target proto ports setname; do
     [ -z "${rtype:-}" ] && continue
     if is_ip_target "$target"; then
-        if [ "$rtype" = "block" ]; then
-            BLOCK_IP+=("$target|$proto|$ports")
+        if [ "$rtype" = "deny" ]; then
+            DENY_IP+=("$target|$proto|$ports")
         else
             ALLOW_IP+=("$target|$proto|$ports")
         fi
     else
-        if [ "$rtype" = "block" ]; then
+        if [ "$rtype" = "deny" ]; then
             DNS_DENY+=("$target")
         else
             DNS_ALLOW+=("$target|$proto|$ports|$setname")
@@ -125,7 +136,7 @@ AUTO_PIN="${AUTO_PIN:-1}"
     echo
     echo "flush ruleset"
     echo
-    echo "table ip firewall {"
+    echo "table inet firewall {"
 
     # Named sets for DNS-resolved IPs (populated by dns-pin with TTL timeouts)
     declare -A emitted_sets=()
@@ -178,11 +189,12 @@ AUTO_PIN="${AUTO_PIN:-1}"
         fi
     }
 
-    if [ "${#BLOCK_IP[@]}" -gt 0 ]; then
-        echo "        # --- BLOCK IP rules (deny wins: block before allow) ---"
-        for rule in "${BLOCK_IP[@]}"; do
+    if [ "${#DENY_IP[@]}" -gt 0 ]; then
+        echo "        # --- DENY IP rules (deny wins: deny before allow) ---"
+        for rule in "${DENY_IP[@]}"; do
             IFS='|' read -r target proto ports <<< "$rule"
-            emit_transport_rules "ip daddr $target" "$proto" "$ports" "drop" "block-ip"
+            addr_match=$(nft_addr_match "$target")
+            emit_transport_rules "$addr_match $target" "$proto" "$ports" "drop" "deny-ip"
         done
         echo
     fi
@@ -191,7 +203,8 @@ AUTO_PIN="${AUTO_PIN:-1}"
         echo "        # --- ALLOW IP rules ---"
         for rule in "${ALLOW_IP[@]}"; do
             IFS='|' read -r target proto ports <<< "$rule"
-            emit_transport_rules "ip daddr $target" "$proto" "$ports" "accept" "allow-ip"
+            addr_match=$(nft_addr_match "$target")
+            emit_transport_rules "$addr_match $target" "$proto" "$ports" "accept" "allow-ip"
         done
         echo
     fi

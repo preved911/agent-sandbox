@@ -34,7 +34,7 @@ func GenerateCoreDNSConfig(fwCfg *config.FirewallConfig) string {
 			if r.Target == "" || r.IsCIDR() {
 				continue
 			}
-			if r.IsBlocked() {
+			if r.IsDenied() {
 				denyZones = append(denyZones, r.Target)
 			} else {
 				allowZones = append(allowZones, r.Target)
@@ -97,7 +97,7 @@ func ValidateDNSRules(fwCfg *config.FirewallConfig) []string {
 		if r.Target == "" || r.IsCIDR() {
 			continue
 		}
-		if r.IsBlocked() {
+		if r.IsDenied() {
 			denies = append(denies, r.Target)
 		} else {
 			allows = append(allows, r.Target)

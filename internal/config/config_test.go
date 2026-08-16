@@ -58,13 +58,13 @@ profiles:
         rules:
           - type: allow
             target: "10.0.0.0/8"
-          - type: block
+          - type: deny
             target: "10.0.0.0/24"
           - type: allow
             target: "anthropic.com"
           - type: allow
             target: "*.anthropic.com"
-          - type: block
+          - type: deny
             target: "evil.anthropic.com"
         auto_pin_resolved: true
         dns:
@@ -88,8 +88,8 @@ profiles:
 	if cfg.Run.Firewall.Rules[0].Type != "allow" || cfg.Run.Firewall.Rules[0].Target != "10.0.0.0/8" {
 		t.Errorf("Firewall.Rules[0] = %+v, want allow 10.0.0.0/8", cfg.Run.Firewall.Rules[0])
 	}
-	if cfg.Run.Firewall.Rules[1].Type != "block" || cfg.Run.Firewall.Rules[1].Target != "10.0.0.0/24" {
-		t.Errorf("Firewall.Rules[1] = %+v, want block 10.0.0.0/24", cfg.Run.Firewall.Rules[1])
+	if cfg.Run.Firewall.Rules[1].Type != "deny" || cfg.Run.Firewall.Rules[1].Target != "10.0.0.0/24" {
+		t.Errorf("Firewall.Rules[1] = %+v, want deny 10.0.0.0/24", cfg.Run.Firewall.Rules[1])
 	}
 
 	// Reverse forward
@@ -320,11 +320,11 @@ profiles:
         rules:
           - type: allow
             target: "0.0.0.0/0"
-          - type: block
+          - type: deny
             target: "5.45.192.0/18"
           - type: allow
             target: "api.example.org"
-          - type: block
+          - type: deny
             target: "evil.example.org"
           - type: allow
             target: "api.anthropic.com"
@@ -342,7 +342,7 @@ profiles:
 	if cfg.Run.Firewall.Rules[0].Type != "allow" {
 		t.Errorf("Rules[0].Type = %q, want %q", cfg.Run.Firewall.Rules[0].Type, "allow")
 	}
-	if cfg.Run.Firewall.Rules[1].Type != "block" {
+	if cfg.Run.Firewall.Rules[1].Type != "deny" {
 		t.Errorf("Rules[1].Type = %q, want %q", cfg.Run.Firewall.Rules[1].Type, "block")
 	}
 	last := cfg.Run.Firewall.Rules[4]
@@ -551,7 +551,7 @@ func TestValidateRules_InvalidProtocol(t *testing.T) {
 	}
 }
 
-func TestValidateRules_IPv6Rejected(t *testing.T) {
+func TestValidateRules_IPv6Accepted(t *testing.T) {
 	cfg := &Config{
 		Run: RunConfig{
 			Port: PortConfig{Container: "4096/tcp"},
@@ -563,11 +563,11 @@ func TestValidateRules_IPv6Rejected(t *testing.T) {
 		},
 	}
 	err := Validate(cfg)
-	if err == nil {
-		t.Fatal("expected error for IPv6 target")
+	if err != nil {
+		t.Fatalf("IPv6 should be accepted, got error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "IPv6 is not supported") {
-		t.Errorf("error should name IPv6: %v", err)
+	if !cfg.Run.Firewall.Rules[0].IsCIDR() {
+		t.Error("IPv6 CIDR target should classify as CIDR")
 	}
 }
 
@@ -592,8 +592,8 @@ func TestValidateRules_BareIPIsCIDR(t *testing.T) {
 
 func TestValidateRules_DenyAlias(t *testing.T) {
 	r := Rule{Type: "deny", Target: "10.0.0.0/8"}
-	if r.IsBlocked() != true {
-		t.Error("deny should be blocked")
+	if r.IsDenied() != true {
+		t.Error("deny should be denied")
 	}
 }
 

@@ -19,7 +19,7 @@ type FirewallConfig struct {
 	// "allow" (permissive) allows all traffic and forwards all DNS queries.
 	Default string `yaml:"default,omitempty"`
 
-	// Rules is the unified firewall rule list. Deny/block rules win over allow.
+	// Rules is the unified firewall rule list. Deny rules win over allow.
 	// Each rule has a target (CIDR, bare IP, or DNS name with optional glob)
 	// and optional protocol/port-spec filtering.
 	Rules []Rule `yaml:"rules,omitempty"`
@@ -41,9 +41,9 @@ type DNSConfig struct {
 	Upstream []string `yaml:"upstream,omitempty"`
 }
 
-// Rule is a single firewall rule. Deny/block rules always win over allow.
+// Rule is a single firewall rule. Deny rules always win over allow.
 type Rule struct {
-	// Type is "allow" or "block" (or "deny", alias for "block").
+	// Type is "allow" or "deny".
 	Type string `yaml:"type"`
 
 	// Target is the rule target:
@@ -97,9 +97,9 @@ func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// IsBlocked returns true if this is a block/deny rule.
-func (r Rule) IsBlocked() bool {
-	return r.Type == "block" || r.Type == "deny"
+// IsDenied returns true if this is a deny rule.
+func (r Rule) IsDenied() bool {
+	return r.Type == "deny"
 }
 
 // IsAllowed returns true if this is an allow rule.
@@ -107,15 +107,15 @@ func (r Rule) IsAllowed() bool {
 	return r.Type == "allow"
 }
 
-// IsCIDR returns true if the target is a CIDR or a bare IPv4 address
-// (a bare IP behaves as a /32 and matches nftables `ip daddr` directly).
+// IsCIDR returns true if the target is a CIDR or a bare IP address (IPv4 or IPv6).
+// A bare IP behaves as a /32 (IPv4) or /128 (IPv6) and matches nftables directly.
 func (r Rule) IsCIDR() bool {
 	if strings.Contains(r.Target, "/") {
 		_, _, err := net.ParseCIDR(r.Target)
 		return err == nil
 	}
-	// Bare IPv4 (colons would mean IPv6, which is unsupported).
-	return !strings.Contains(r.Target, ":") && net.ParseIP(r.Target) != nil
+	// Bare IP (IPv4 or IPv6)
+	return net.ParseIP(r.Target) != nil
 }
 
 // IsDNS returns true if the target is a DNS name (not a CIDR, IP, or IP:port).
@@ -140,10 +140,10 @@ func (fwCfg *FirewallConfig) PinResolved() bool {
 	return fwCfg.AutoPinResolved == nil || *fwCfg.AutoPinResolved
 }
 
-// normalizeRuleType normalizes "deny" → "block".
+// normalizeRuleType normalizes "block" → "deny".
 func normalizeRuleType(t string) string {
-	if t == "deny" {
-		return "block"
+	if t == "block" {
+		return "deny"
 	}
 	return t
 }

@@ -21,20 +21,21 @@ type DNATConfig struct {
 //
 // Rule ordering (deny wins):
 //  1. established/related accept, invalid drop
-//  2. block rules (CIDR/IP targets) — before any allow, so a blocked CIDR
+//  2. deny rules (CIDR/IP targets) — before any allow, so a denied CIDR
 //     always wins over a DNS-pinned allow
 //  3. allow rules (CIDR/IP targets)
 //  4. allow rules for DNS-resolved IPs, matching against named sets populated
 //     dynamically by the dns-pin daemon
 //  5. default policy
 //
-// Uses IP-based matching (ip saddr/ip daddr) instead of interface names for
+// Uses IP-based matching (ip daddr/ip6 daddr) instead of interface names for
 // cross-platform compatibility (Docker Desktop for Mac names all interfaces eth0).
+// Supports both IPv4 and IPv6 via the inet family.
 func GenerateNftablesConfig(fwCfg *config.FirewallConfig, dnat *DNATConfig, subnet string) string {
 	var b strings.Builder
 	b.WriteString("#!/usr/sbin/nft -f\n\n")
 	b.WriteString("flush ruleset\n\n")
-	b.WriteString("table ip firewall {\n")
+	b.WriteString("table inet firewall {\n")
 
 	writeDNSSets(&b, fwCfg)
 
@@ -122,30 +123,30 @@ func writeDNSSets(b *strings.Builder, fwCfg *config.FirewallConfig) {
 	b.WriteString("\n")
 }
 
-// writeIPRules emits block or allow rules for CIDR/IP targets with protocol
-// and port-spec matching. Block rules are emitted before allow rules (deny wins).
-func writeIPRules(b *strings.Builder, fwCfg *config.FirewallConfig, blocked bool) {
+// writeIPRules emits deny or allow rules for CIDR/IP targets with protocol
+// and port-spec matching. Deny rules are emitted before allow rules (deny wins).
+func writeIPRules(b *strings.Builder, fwCfg *config.FirewallConfig, denied bool) {
 	if fwCfg == nil {
 		return
 	}
 	var section string
 	var verdict string
-	if blocked {
-		section, verdict = "BLOCK", "drop"
+	if denied {
+		section, verdict = "DENY", "drop"
 	} else {
 		section, verdict = "ALLOW", "accept"
 	}
 	wrote := false
 	for _, r := range fwCfg.Rules {
-		if r.Target == "" || r.IsBlocked() != blocked || !r.IsCIDR() {
+		if r.Target == "" || r.IsDenied() != denied || !r.IsCIDR() {
 			continue
 		}
 		if !wrote {
-			b.WriteString(fmt.Sprintf("        # --- %s IP rules (deny wins: block before allow) ---\n", section))
+			b.WriteString(fmt.Sprintf("        # --- %s IP rules (deny wins: deny before allow) ---\n", section))
 			wrote = true
 		}
 		for _, match := range nftTransportMatches(r) {
-			expr := "ip daddr " + r.Target
+			expr := nftAddrMatch(r.Target) + " " + r.Target
 			if match != "" {
 				expr += " " + match
 			}
@@ -215,6 +216,17 @@ func nftPortSet(canonicalSpec string) string {
 	return canonicalSpec
 }
 
+// nftAddrMatch returns the nftables address match expression for an IP target:
+// "ip daddr" for IPv4, "ip6 daddr" for IPv6.
+func nftAddrMatch(target string) string {
+	// Check if target is IPv6 by looking for colons
+	// IPv6 addresses contain colons, IPv4 addresses do not
+	if strings.Contains(target, ":") {
+		return "ip6 daddr"
+	}
+	return "ip daddr"
+}
+
 // ValidateCIDRRules checks for conflicts between allow and deny rules with
 // CIDR/IP targets. Returns warnings for overlapping CIDRs.
 func ValidateCIDRRules(fwCfg *config.FirewallConfig) []string {
@@ -235,7 +247,7 @@ func ValidateCIDRRules(fwCfg *config.FirewallConfig) []string {
 		} else {
 			continue
 		}
-		if r.IsBlocked() {
+		if r.IsDenied() {
 			denyCIDRs = append(denyCIDRs, ipNet)
 		} else {
 			allowCIDRs = append(allowCIDRs, ipNet)

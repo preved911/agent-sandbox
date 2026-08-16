@@ -12,7 +12,7 @@ func TestGenerateCoreDNSConfig_DenyBeforeAllow(t *testing.T) {
 		Rules: []config.Rule{
 			{Type: "allow", Target: "anthropic.com"},
 			{Type: "allow", Target: "*.github.com"},
-			{Type: "block", Target: "evil.anthropic.com"},
+			{Type: "deny", Target: "evil.anthropic.com"},
 		},
 	}
 
@@ -36,7 +36,7 @@ func TestGenerateCoreDNSConfig_DenyBeforeAllow(t *testing.T) {
 func TestGenerateCoreDNSConfig_DenyReturnsNXDOMAIN(t *testing.T) {
 	network := &config.FirewallConfig{
 		Rules: []config.Rule{
-			{Type: "block", Target: "blocked.com"},
+			{Type: "deny", Target: "blocked.com"},
 		},
 	}
 
@@ -115,7 +115,7 @@ func TestValidateDNSRules_NoConflict(t *testing.T) {
 	network := &config.FirewallConfig{
 		Rules: []config.Rule{
 			{Type: "allow", Target: "anthropic.com"},
-			{Type: "block", Target: "evil.com"},
+			{Type: "deny", Target: "evil.com"},
 		},
 	}
 
@@ -129,7 +129,7 @@ func TestValidateDNSRules_ExactConflict(t *testing.T) {
 	network := &config.FirewallConfig{
 		Rules: []config.Rule{
 			{Type: "allow", Target: "foo.com"},
-			{Type: "block", Target: "foo.com"},
+			{Type: "deny", Target: "foo.com"},
 		},
 	}
 
@@ -143,7 +143,7 @@ func TestValidateDNSRules_WildcardConflict(t *testing.T) {
 	network := &config.FirewallConfig{
 		Rules: []config.Rule{
 			{Type: "allow", Target: "*.anthropic.com"},
-			{Type: "block", Target: "evil.anthropic.com"},
+			{Type: "deny", Target: "evil.anthropic.com"},
 		},
 	}
 

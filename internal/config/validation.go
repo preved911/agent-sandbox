@@ -94,8 +94,8 @@ func validateRules(rules []Rule) error {
 	for i := range rules {
 		r := &rules[i]
 		r.Type = normalizeRuleType(r.Type)
-		if r.Type != "allow" && r.Type != "block" {
-			return fmt.Errorf("rules[%d].type: invalid value %q, must be \"allow\" or \"block\"", i, r.Type)
+		if r.Type != "allow" && r.Type != "deny" {
+			return fmt.Errorf("rules[%d].type: invalid value %q, must be \"allow\" or \"deny\"", i, r.Type)
 		}
 		r.Target = strings.TrimSpace(r.Target)
 		if r.Target == "" {
@@ -140,20 +140,16 @@ func validateRules(rules []Rule) error {
 	return nil
 }
 
-// validateIPRuleTarget checks that an IP/CIDR target parses and is IPv4 —
-// the nftables ruleset is generated in the `ip` family, so IPv6 targets
-// cannot be enforced and fail early with a clear message.
+// validateIPRuleTarget checks that an IP/CIDR target parses correctly.
+// Supports both IPv4 and IPv6 addresses.
 func validateIPRuleTarget(i int, target string) error {
-	ip := target
-	if _, network, err := net.ParseCIDR(target); err == nil {
-		ip = network.IP.String()
-	} else if net.ParseIP(target) == nil {
+	if _, _, err := net.ParseCIDR(target); err == nil {
+		return nil // valid CIDR (IPv4 or IPv6)
+	}
+	if net.ParseIP(target) == nil {
 		return fmt.Errorf("rules[%d].target: invalid CIDR or IP %q", i, target)
 	}
-	if net.ParseIP(ip).To4() == nil {
-		return fmt.Errorf("rules[%d].target: IPv6 is not supported (%q)", i, target)
-	}
-	return nil
+	return nil // valid bare IP (IPv4 or IPv6)
 }
 
 func validateReverseForward(r *ReverseForwardConfig) error {
