@@ -294,7 +294,9 @@ declare -A deny_zones=()
         echo "$domain:53 {"
         echo "    errors"
         echo "    log"
-        echo "    forward . $DNS_UPSTREAM_SPACES"
+        echo "    forward . $DNS_UPSTREAM_SPACES {"
+        echo "        force_tcp"
+        echo "    }"
         echo "}"
         echo
     done
@@ -303,7 +305,9 @@ declare -A deny_zones=()
     echo "    errors"
     echo "    log"
     if [ "$DNS_DEFAULT" = "allow" ]; then
-        echo "    forward . $DNS_UPSTREAM_SPACES"
+        echo "    forward . $DNS_UPSTREAM_SPACES {"
+        echo "        force_tcp"
+        echo "    }"
     else
         echo "    template IN ANY . {"
         echo "        rcode NXDOMAIN"
