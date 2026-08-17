@@ -91,22 +91,35 @@ if [ -n "${GATEWAY:-}" ]; then
 fi
 
 # --- Classify unified rules ---
-# is_ip_target: CIDR or bare IPv4 (host validation already rejected anything else).
+# is_ip_target: CIDR or bare IP (IPv4 or IPv6).
 is_ip_target() {
-    [[ "$1" == */* ]] || [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+    [[ "$1" == */* ]] || [[ "$1" =~ ^[0-9a-fA-F:.]+$ ]]
+}
+is_ipv6_target() {
+    [[ "$1" == *:* ]]
 }
 
 BLOCK_IP=()      # "target|proto|ports"
 ALLOW_IP=()      # "target|proto|ports"
+BLOCK_IP6=()     # "target|proto|ports"
+ALLOW_IP6=()     # "target|proto|ports"
 DNS_DENY=()      # "domain"
 DNS_ALLOW=()     # "domain|proto|ports|set"
 while IFS='|' read -r rtype target proto ports setname; do
     [ -z "${rtype:-}" ] && continue
     if is_ip_target "$target"; then
-        if [ "$rtype" = "block" ]; then
-            BLOCK_IP+=("$target|$proto|$ports")
+        if is_ipv6_target "$target"; then
+            if [ "$rtype" = "block" ]; then
+                BLOCK_IP6+=("$target|$proto|$ports")
+            else
+                ALLOW_IP6+=("$target|$proto|$ports")
+            fi
         else
-            ALLOW_IP+=("$target|$proto|$ports")
+            if [ "$rtype" = "block" ]; then
+                BLOCK_IP+=("$target|$proto|$ports")
+            else
+                ALLOW_IP+=("$target|$proto|$ports")
+            fi
         fi
     else
         if [ "$rtype" = "block" ]; then
@@ -254,6 +267,111 @@ AUTO_PIN="${AUTO_PIN:-1}"
     echo "        ip saddr ${SUBNET:-10.0.0.0/8} ip daddr != ${SUBNET:-10.0.0.0/8} masquerade"
     echo "    }"
     echo "}"
+    echo
+
+    # --- IPv6 table ---
+    has_ip6=false
+    [ "${#BLOCK_IP6[@]}" -gt 0 ] && has_ip6=true
+    [ "${#ALLOW_IP6[@]}" -gt 0 ] && has_ip6=true
+    [ "$has_ip6" = true ] && {
+        echo "table ip6 firewall {"
+
+        # IPv6 DNS sets
+        if [ "$AUTO_PIN" = "1" ]; then
+            for rule in "${DNS_ALLOW[@]+"${DNS_ALLOW[@]}"}"; do
+                IFS='|' read -r _domain _proto _ports setname <<< "$rule"
+                [ -z "$setname" ] && continue
+                echo "    set $setname {"
+                echo "        type ipv6_addr"
+                echo "        flags timeout"
+                echo "    }"
+            done
+        fi
+
+        echo "    chain forward {"
+        echo "        type filter hook forward priority 0; policy drop;"
+        echo
+        echo "        ct state established,related accept"
+        echo "        ct state invalid drop"
+        echo
+
+        if [ "${#BLOCK_IP6[@]}" -gt 0 ]; then
+            echo "        # --- BLOCK IPv6 rules ---"
+            for rule in "${BLOCK_IP6[@]}"; do
+                IFS='|' read -r target proto ports <<< "$rule"
+                emit_transport_rules "ip6 daddr $target" "$proto" "$ports" "drop" "block-ip6"
+            done
+            echo
+        fi
+
+        if [ "${#ALLOW_IP6[@]}" -gt 0 ]; then
+            echo "        # --- ALLOW IPv6 rules ---"
+            for rule in "${ALLOW_IP6[@]}"; do
+                IFS='|' read -r target proto ports <<< "$rule"
+                emit_transport_rules "ip6 daddr $target" "$proto" "$ports" "accept" "allow-ip6"
+            done
+            echo
+        fi
+
+        if [ "$AUTO_PIN" = "1" ] && [ "${#DNS_ALLOW[@]}" -gt 0 ]; then
+            echo "        # --- ALLOW DNS-resolved IPv6 IPs ---"
+            declare -A seen6_rules=()
+            for rule in "${DNS_ALLOW[@]}"; do
+                IFS='|' read -r _domain proto ports setname <<< "$rule"
+                [ -z "$setname" ] && continue
+                if [ -z "$ports" ]; then
+                    if [ -n "$proto" ]; then
+                        key="@$setname|meta l4proto $proto"
+                        [ -n "${seen6_rules[$key]:-}" ] && continue
+                        seen6_rules[$key]=1
+                        printf '        ip6 daddr @%s meta l4proto %s accept comment "allow-dns-resolved"\n' "$setname" "$proto"
+                    else
+                        key="@$setname|"
+                        [ -n "${seen6_rules[$key]:-}" ] && continue
+                        seen6_rules[$key]=1
+                        printf '        ip6 daddr @%s accept comment "allow-dns-resolved"\n' "$setname"
+                    fi
+                    continue
+                fi
+                if [[ "$ports" == *,* ]]; then
+                    dport="dport { $ports }"
+                else
+                    dport="dport $ports"
+                fi
+                if [ -n "$proto" ]; then
+                    key="@$setname|$proto $dport"
+                    [ -n "${seen6_rules[$key]:-}" ] && continue
+                    seen6_rules[$key]=1
+                    printf '        ip6 daddr @%s %s %s accept comment "allow-dns-resolved"\n' "$setname" "$proto" "$dport"
+                else
+                    for p in tcp udp; do
+                        key="@$setname|$p $dport"
+                        [ -n "${seen6_rules[$key]:-}" ] && continue
+                        seen6_rules[$key]=1
+                        printf '        ip6 daddr @%s %s %s accept comment "allow-dns-resolved"\n' "$setname" "$p" "$dport"
+                    done
+                fi
+            done
+            echo
+        fi
+
+        echo "        # --- Default policy ---"
+        if [ "$DEFAULT_POLICY" = "allow" ]; then
+            echo '        accept comment "default-allow"'
+        else
+            echo '        drop comment "default-deny"'
+        fi
+
+        echo "    }"
+        echo
+        echo "    chain postrouting {"
+        echo "        type nat hook postrouting priority 100;"
+        echo
+        echo "        ip6 saddr fd00::/8 ip6 daddr != fd00::/8 masquerade"
+        echo "    }"
+        echo "}"
+        echo
+    }
 } > /etc/nftables.conf
 
 echo "Generated nftables config:"
@@ -294,9 +412,7 @@ declare -A deny_zones=()
         echo "$domain:53 {"
         echo "    errors"
         echo "    log"
-        echo "    forward . $DNS_UPSTREAM_SPACES {"
-        echo "        force_tcp"
-        echo "    }"
+        echo "    forward . $(echo "$DNS_UPSTREAM" | sed 's|[^,]*|tls://&|g; s|,| |g')"
         echo "}"
         echo
     done
@@ -305,9 +421,7 @@ declare -A deny_zones=()
     echo "    errors"
     echo "    log"
     if [ "$DNS_DEFAULT" = "allow" ]; then
-        echo "    forward . $DNS_UPSTREAM_SPACES {"
-        echo "        force_tcp"
-        echo "    }"
+        echo "    forward . $(echo "$DNS_UPSTREAM" | sed 's|[^,]*|tls://&|g; s|,| |g')"
     else
         echo "    template IN ANY . {"
         echo "        rcode NXDOMAIN"

@@ -551,7 +551,7 @@ func TestValidateRules_InvalidProtocol(t *testing.T) {
 	}
 }
 
-func TestValidateRules_IPv6Rejected(t *testing.T) {
+func TestValidateRules_IPv6Accepted(t *testing.T) {
 	cfg := &Config{
 		Run: RunConfig{
 			Port: PortConfig{Container: "4096/tcp"},
@@ -563,11 +563,8 @@ func TestValidateRules_IPv6Rejected(t *testing.T) {
 		},
 	}
 	err := Validate(cfg)
-	if err == nil {
-		t.Fatal("expected error for IPv6 target")
-	}
-	if !strings.Contains(err.Error(), "IPv6 is not supported") {
-		t.Errorf("error should name IPv6: %v", err)
+	if err != nil {
+		t.Fatalf("IPv6 CIDR should be accepted, got: %v", err)
 	}
 }
 
