@@ -140,9 +140,6 @@ func validateRules(rules []Rule) error {
 	return nil
 }
 
-// validateIPRuleTarget checks that an IP/CIDR target parses and is IPv4 —
-// the nftables ruleset is generated in the `ip` family, so IPv6 targets
-// cannot be enforced and fail early with a clear message.
 func validateIPRuleTarget(i int, target string) error {
 	ip := target
 	if _, network, err := net.ParseCIDR(target); err == nil {
@@ -150,9 +147,7 @@ func validateIPRuleTarget(i int, target string) error {
 	} else if net.ParseIP(target) == nil {
 		return fmt.Errorf("rules[%d].target: invalid CIDR or IP %q", i, target)
 	}
-	if net.ParseIP(ip).To4() == nil {
-		return fmt.Errorf("rules[%d].target: IPv6 is not supported (%q)", i, target)
-	}
+	_ = ip // valid CIDR or bare IP
 	return nil
 }
 
