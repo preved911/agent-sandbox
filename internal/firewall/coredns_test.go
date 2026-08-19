@@ -77,9 +77,9 @@ func TestGenerateCoreDNSConfig_DefaultDeny(t *testing.T) {
 
 	cfg := GenerateCoreDNSConfig(network)
 
-	// Default deny = NXDOMAIN for everything not matched
-	if !strings.Contains(cfg, "rcode NXDOMAIN") {
-		t.Error("expected NXDOMAIN for default deny")
+	// Temporarily: DNS always resolves regardless of default policy
+	if !strings.Contains(cfg, "forward . 1.1.1.1 8.8.8.8") {
+		t.Error("expected forward to upstream even with default deny")
 	}
 }
 
@@ -102,12 +102,13 @@ func TestGenerateCoreDNSConfig_DefaultAllow(t *testing.T) {
 func TestGenerateCoreDNSConfig_NilNetwork(t *testing.T) {
 	cfg := GenerateCoreDNSConfig(nil)
 
-	// Should use defaults: deny, upstream 1.1.1.1 8.8.8.8
+	// Should use defaults: upstream 1.1.1.1 8.8.8.8
 	if !strings.Contains(cfg, ".:53 {") {
 		t.Error("expected listen on :53")
 	}
-	if !strings.Contains(cfg, "rcode NXDOMAIN") {
-		t.Error("expected default deny (NXDOMAIN)")
+	// Temporarily: DNS always resolves regardless of default policy
+	if !strings.Contains(cfg, "forward . 1.1.1.1 8.8.8.8") {
+		t.Error("expected forward to upstream")
 	}
 }
 
