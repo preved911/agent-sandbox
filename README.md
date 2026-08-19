@@ -118,17 +118,21 @@ profiles:
         bind: 127.0.0.1
 
     firewall:
-      network:
-        default: deny
-        cidr:
-          allow: [10.0.0.0/8]
-          deny: [10.0.0.0/24]
-        dns:
-          default: allow
-          allow: [anthropic.com, "*.anthropic.com"]
-          deny: [evil.anthropic.com]
-          upstream: [1.1.1.1, 8.8.8.8]
-        auto_pin_resolved: true
+      default: deny
+      rules:
+        - type: allow
+          target: "10.0.0.0/8"
+        - type: block
+          target: "10.0.0.0/24"
+        - type: allow
+          target: "anthropic.com"
+        - type: allow
+          target: "*.anthropic.com"
+        - type: block
+          target: "evil.anthropic.com"
+      auto_pin_resolved: true
+      dns_config:
+        upstream: [1.1.1.1, 8.8.8.8]
 
     reverse_forward:
       ports:
