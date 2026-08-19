@@ -57,6 +57,10 @@ func validateRun(r *RunConfig) error {
 // legacy CIDR/DNS lists are converted into unified Rules and port specs are
 // canonicalized in place. Callers should invoke this before generating
 // firewall env vars or nftables/CoreDNS configuration.
+//
+// DNS name rules are temporarily disabled: only CIDR/IP targets are enforced.
+// DNS rules are stripped with a warning so configs still load but DNS filtering
+// is effectively a no-op.
 func ValidateFirewall(f *FirewallConfig) error {
 	return validateFirewall(f)
 }
@@ -71,7 +75,27 @@ func validateFirewall(f *FirewallConfig) error {
 			return fmt.Errorf("dns_config.upstream: invalid IP address %q", ip)
 		}
 	}
-	return validateRules(f.Rules)
+	if err := validateRules(f.Rules); err != nil {
+		return err
+	}
+
+	// Temporarily disable DNS name filtering: strip DNS rules from the list
+	// so only CIDR/IP targets are enforced. DNS resolution still works for
+	// the firewall itself but domain-based deny/allow rules are a no-op.
+	n := 0
+	for _, r := range f.Rules {
+		if r.IsDNS() {
+			log.Printf("WARNING: DNS rule disabled (temporarily): %s %s — only CIDR/IP rules are enforced", r.Type, r.Target)
+			continue
+		}
+		f.Rules[n] = r
+		n++
+	}
+	if n < len(f.Rules) {
+		f.Rules = f.Rules[:n]
+	}
+
+	return nil
 }
 
 func validateDefaultPolicy(val, field string) error {

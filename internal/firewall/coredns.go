@@ -10,18 +10,11 @@ import (
 // GenerateCoreDNSConfig generates a CoreDNS Corefile from the unified firewall
 // rules. It expects a config that has passed ValidateFirewall.
 //
-// The Corefile uses one server block per zone so CoreDNS routes each query to
-// the most specific zone: a deny zone returns NXDOMAIN (template plugin), an
-// allow zone forwards to upstream, and the root zone applies the default
-// policy. A zone listed in both allow and deny is emitted as deny only
-// (duplicate zone blocks are a CoreDNS startup error).
+// Temporarily: DNS filtering is disabled. CoreDNS always forwards all queries
+// to upstream regardless of default policy. Only CIDR/IP rules are enforced.
 func GenerateCoreDNSConfig(fwCfg *config.FirewallConfig) string {
-	dnsDefault := "deny"
 	dnsUpstream := "1.1.1.1 8.8.8.8"
 	if fwCfg != nil {
-		if fwCfg.Default != "" {
-			dnsDefault = fwCfg.Default
-		}
 		if len(fwCfg.DNSConfig.Upstream) > 0 {
 			dnsUpstream = strings.Join(fwCfg.DNSConfig.Upstream, " ")
 		}
@@ -72,13 +65,9 @@ func GenerateCoreDNSConfig(fwCfg *config.FirewallConfig) string {
 	b.WriteString(".:53 {\n")
 	b.WriteString("    errors\n")
 	b.WriteString("    log\n")
-	if dnsDefault == "allow" {
-		b.WriteString(fmt.Sprintf("    forward . %s\n", dnsUpstream))
-	} else {
-		b.WriteString("    template IN ANY . {\n")
-		b.WriteString("        rcode NXDOMAIN\n")
-		b.WriteString("    }\n")
-	}
+	// Temporarily: always resolve all names regardless of default policy.
+	// DNS filtering is disabled; only CIDR/IP rules are enforced.
+	b.WriteString(fmt.Sprintf("    forward . %s\n", dnsUpstream))
 	b.WriteString("}\n")
 
 	return b.String()

@@ -186,25 +186,3 @@ func groupByHash(containers []types.Container) []sandboxInfo {
 func isRunning(c *types.Container) bool {
 	return strings.HasPrefix(c.State, "Up")
 }
-
-func shortID(id string) string {
-	if len(id) > 12 {
-		return id[:12]
-	}
-	return id
-}
-
-func formatPorts(ports []types.Port) string {
-	parts := make([]string, 0, len(ports))
-	for _, p := range ports {
-		if p.PublicPort == 0 {
-			continue
-		}
-		ip := p.IP
-		if ip == "" {
-			ip = "0.0.0.0"
-		}
-		parts = append(parts, fmt.Sprintf("%s:%d->%d/%s", ip, p.PublicPort, p.PrivatePort, p.Type))
-	}
-	return strings.Join(parts, ", ")
-}

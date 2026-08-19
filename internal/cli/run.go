@@ -189,7 +189,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 					readinessAttach, err := dockerCli.ContainerExecAttach(ctx, readinessResp.ID, container.ExecStartOptions{})
 					if err == nil {
 						// Read output to let the exec run to completion.
-						io.Copy(io.Discard, readinessAttach.Reader)
+						_, _ = io.Copy(io.Discard, readinessAttach.Reader)
 						readinessAttach.Close()
 					}
 
@@ -294,7 +294,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				go func() {
 					for range sig {
 						if nw, nh, err := term.GetSize(int(os.Stdin.Fd())); err == nil {
-							dockerCli.ContainerExecResize(ctx, resp.ID, container.ResizeOptions{
+							_ = dockerCli.ContainerExecResize(ctx, resp.ID, container.ResizeOptions{
 								Width:  uint(nw),
 								Height: uint(nh),
 							})
@@ -319,7 +319,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				// 60s, it returns and the loop retries automatically.
 				copyDone := make(chan error, 1)
 				go func() {
-					io.Copy(attachResp.Conn, cancelReader{ctx: copyCtx, r: os.Stdin})
+					_, _ = io.Copy(attachResp.Conn, cancelReader{ctx: copyCtx, r: os.Stdin})
 				}()
 				go func() {
 					copyDone <- copyWithTimeout(os.Stdout, attachResp.Reader, 60*time.Second)
@@ -329,7 +329,7 @@ func newRunCmd(rf *rootFlags) *cobra.Command {
 				signal.Stop(sig)
 				signal.Stop(sigInt)
 				attachResp.Close()
-				term.Restore(int(os.Stdin.Fd()), oldState)
+				_ = term.Restore(int(os.Stdin.Fd()), oldState)
 
 				// Wait for exec to finish — with a short deadline.
 				waitDeadline := time.After(5 * time.Second)

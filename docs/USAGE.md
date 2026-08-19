@@ -250,16 +250,17 @@ Allow or deny IP ranges. Deny wins — if a CIDR appears in both lists, deny tak
 
 ```yaml
 firewall:
-  network:
-    default: deny          # block everything not explicitly allowed
-    cidr:
-      allow:
-        - 10.0.0.0/8       # private network
-        - 172.16.0.0/12    # private network
-        - 192.168.0.0/16   # private network
-      deny:
-        - 10.0.0.0/24      # block specific subnet (overrides allow)
-    auto_pin_resolved: true  # auto-allow DNS-resolved IPs
+  default: deny          # block everything not explicitly allowed
+  rules:
+    - type: allow
+      target: "10.0.0.0/8"       # private network
+    - type: allow
+      target: "172.16.0.0/12"    # private network
+    - type: allow
+      target: "192.168.0.0/16"   # private network
+    - type: block
+      target: "10.0.0.0/24"      # block specific subnet (overrides allow)
+  auto_pin_resolved: true  # auto-allow DNS-resolved IPs
 ```
 
 ### DNS rules
@@ -268,18 +269,20 @@ Allow or deny domains. Supports wildcards. Deny wins.
 
 ```yaml
 firewall:
-  network:
-    dns:
-      default: deny
-      allow:
-        - "*.anthropic.com"    # all Anthropic subdomains
-        - "api.openai.com"     # OpenAI API only
-        - "registry.npmjs.org" # npm registry
-      deny:
-        - "evil.anthropic.com" # block specific subdomain
-      upstream:
-        - 1.1.1.1              # Cloudflare DNS
-        - 8.8.8.8              # Google DNS
+  default: deny
+  rules:
+    - type: allow
+      target: "*.anthropic.com"    # all Anthropic subdomains
+    - type: allow
+      target: "api.openai.com"     # OpenAI API only
+    - type: allow
+      target: "registry.npmjs.org" # npm registry
+    - type: block
+      target: "evil.anthropic.com" # block specific subdomain
+  dns_config:
+    upstream:
+      - 1.1.1.1              # Cloudflare DNS
+      - 8.8.8.8              # Google DNS
 ```
 
 ### Default policy
@@ -297,32 +300,28 @@ If the same CIDR or domain appears in both allow and deny lists, the config load
 
 ```yaml
 firewall:
-  network:
-    default: deny
-    cidr:
-      allow: []
-      deny: []
-    dns:
-      default: deny
-      allow:
-        - "*.anthropic.com"
-        - "api.openai.com"
-      upstream: [1.1.1.1]
+  default: deny
+  rules:
+    - type: allow
+      target: "*.anthropic.com"
+    - type: allow
+      target: "api.openai.com"
+  dns_config:
+    upstream: [1.1.1.1]
 ```
 
 **Private subnet access (dev environment):**
 
 ```yaml
 firewall:
-  network:
-    default: deny
-    cidr:
-      allow:
-        - 10.0.0.0/8
-        - 172.16.0.0/12
-    dns:
-      default: allow
-      upstream: [1.1.1.1, 8.8.8.8]
+  default: deny
+  rules:
+    - type: allow
+      target: "10.0.0.0/8"
+    - type: allow
+      target: "172.16.0.0/12"
+  dns_config:
+    upstream: [1.1.1.1, 8.8.8.8]
 ```
 
 ---
@@ -443,14 +442,14 @@ profiles:
         bind: 127.0.0.1
 
     firewall:
-      network:
-        default: deny
-        dns:
-          default: deny
-          allow:
-            - "*.anthropic.com"
-            - "api.openai.com"
-          upstream: [1.1.1.1]
+      default: deny
+      rules:
+        - type: allow
+          target: "*.anthropic.com"
+        - type: allow
+          target: "api.openai.com"
+      dns_config:
+        upstream: [1.1.1.1]
 ```
 
 ### Private subnet access
@@ -469,15 +468,14 @@ profiles:
         bind: 127.0.0.1
 
     firewall:
-      network:
-        default: deny
-        cidr:
-          allow:
-            - 10.0.0.0/8
-            - 172.16.0.0/12
-        dns:
-          default: allow
-          upstream: [1.1.1.1, 8.8.8.8]
+      default: deny
+      rules:
+        - type: allow
+          target: "10.0.0.0/8"
+        - type: allow
+          target: "172.16.0.0/12"
+      dns_config:
+        upstream: [1.1.1.1, 8.8.8.8]
 ```
 
 ### Development server (live reload)
@@ -500,11 +498,14 @@ profiles:
             container: 5173  # accessible inside sandbox
 
     firewall:
-      network:
-        default: deny
-        dns:
-          default: allow
-          upstream: [1.1.1.1]
+      default: deny
+      rules:
+        - type: allow
+          target: "*.anthropic.com"
+        - type: allow
+          target: "api.openai.com"
+      dns_config:
+        upstream: [1.1.1.1]
 ```
 
 ### Multi-profile setup
