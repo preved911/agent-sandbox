@@ -30,6 +30,12 @@ if [ "$CURRENT_FWD" != "1" ]; then
         echo "WARN: cannot set ip_forward (may already be enabled on host)" >&2
 fi
 
+CURRENT_FWD6=$(cat /proc/sys/net/ipv6/conf/all/forwarding 2>/dev/null || echo 0)
+if [ "$CURRENT_FWD6" != "1" ]; then
+    echo 1 > /proc/sys/net/ipv6/conf/all/forwarding 2>/dev/null || \
+        echo "WARN: cannot set ipv6 forwarding (may already be enabled on host)" >&2
+fi
+
 # --- Detect network configuration ---
 SUBNET_PREFIX=""
 if [ -n "${SUBNET:-}" ]; then
@@ -87,6 +93,15 @@ if [ -n "${GATEWAY:-}" ]; then
         ip addr add "${GATEWAY}/${MASK:-24}" dev "$INSIDE_IF" 2>/dev/null || \
             echo "WARN: could not add gateway ${GATEWAY} on ${INSIDE_IF} (may already exist)" >&2
         echo "Added gateway ${GATEWAY}/${MASK:-24} on ${INSIDE_IF}"
+
+        # Add IPv6 gateway as secondary address so agent IPv6 traffic routed
+        # to the network gateway (::1) arrives at the firewall.
+        if [ -n "${GATEWAY6:-}" ] && [ -n "${SUBNET6:-}" ]; then
+            MASK6="${SUBNET6##*/}"
+            ip -6 addr add "${GATEWAY6}/${MASK6:-64}" dev "$INSIDE_IF" 2>/dev/null || \
+                echo "WARN: could not add IPv6 gateway ${GATEWAY6} on ${INSIDE_IF} (may already exist)" >&2
+            echo "Added IPv6 gateway ${GATEWAY6}/${MASK6:-64} on ${INSIDE_IF}"
+        fi
     fi
 fi
 
@@ -386,6 +401,21 @@ DNS_DEFAULT="${DNS_DEFAULT:-deny}"
 DNS_UPSTREAM="${DNS_UPSTREAM:-1.1.1.1,8.8.8.8}"
 DNS_UPSTREAM_SPACES="${DNS_UPSTREAM//,/ }"
 
+# format_upstream converts the comma-separated DNS_UPSTREAM list into a
+# space-separated list of CoreDNS forward targets.  Entries that already
+# carry a scheme (tls://, dns://, https://, …) are forwarded as-is so the
+# caller controls the protocol.  Bare IPs / hostnames get no scheme, which
+# makes CoreDNS use plain DNS on port 53.
+format_upstream() {
+    local result=""
+    local srv
+    while IFS= read -r srv; do
+        [ -z "$srv" ] && continue
+        result+="$srv "
+    done < <(echo "$DNS_UPSTREAM" | tr ',' '\n')
+    echo "${result% }"
+}
+
 declare -A deny_zones=()
 {
     for domain in "${DNS_DENY[@]+"${DNS_DENY[@]}"}"; do
@@ -412,7 +442,7 @@ declare -A deny_zones=()
         echo "$domain:53 {"
         echo "    errors"
         echo "    log"
-        echo "    forward . $(echo "$DNS_UPSTREAM" | sed 's|[^,]*|tls://&|g; s|,| |g')"
+        echo "    forward . $(format_upstream)"
         echo "}"
         echo
     done
@@ -421,7 +451,7 @@ declare -A deny_zones=()
     echo "    errors"
     echo "    log"
     if [ "$DNS_DEFAULT" = "allow" ]; then
-        echo "    forward . $(echo "$DNS_UPSTREAM" | sed 's|[^,]*|tls://&|g; s|,| |g')"
+        echo "    forward . $(format_upstream)"
     else
         echo "    template IN ANY . {"
         echo "        rcode NXDOMAIN"

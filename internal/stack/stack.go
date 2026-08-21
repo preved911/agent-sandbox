@@ -274,7 +274,7 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 	fwName := sandbox.ResourceName(s.hash, sandbox.SuffixFirewall)
 	networkName := sandbox.ResourceName(s.hash, sandbox.SuffixNet)
 
-	_, _, firewallIP, agentIP := sandboxnet.SubnetFromHash(s.hash)
+	_, _, firewallIP, agentIP, _, _, _ := sandboxnet.SubnetFromHash(s.hash)
 
 	imageTag, err := firewall.EnsureFirewallImage(ctx, s.cli, s.config.Run.Firewall.Image)
 	if err != nil {
@@ -286,9 +286,18 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 	envSlice = append(envSlice, "AGENT_IP="+agentIP)
 	envSlice = append(envSlice, "AGENT_PORT="+s.config.Run.Port.Container)
 
-	subnet, gateway, _, _ := sandboxnet.SubnetFromHash(s.hash)
+	subnet, gateway, _, _, subnet6, _, _ := sandboxnet.SubnetFromHash(s.hash)
 	envSlice = append(envSlice, "SUBNET="+subnet)
 	envSlice = append(envSlice, "GATEWAY="+gateway)
+	// Derive the IPv6 gateway from the /64 subnet (::1 host).
+	// The firewall claims this address as a secondary IP so agent IPv6
+	// traffic routed to the network gateway lands on the firewall.
+	if subnet6 != "" {
+		// subnet6 is "fd<xx>:<yy>00::/64" → gateway6 is "fd<xx>:<yy>00::1"
+		gw6 := subnet6[:len(subnet6)-len("::/64")] + "::1"
+		envSlice = append(envSlice, "SUBNET6="+subnet6)
+		envSlice = append(envSlice, "GATEWAY6="+gw6)
+	}
 
 	labels := sandbox.DefaultLabels(s.hash, s.path, "")
 	labels[sandbox.SandboxRole] = "firewall"
@@ -304,7 +313,15 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 		RestartPolicy: container.RestartPolicy{
 			Name: container.RestartPolicyUnlessStopped,
 		},
+		// Enable IPv6 forwarding inside the firewall container so it can route
+		// IPv6 traffic from the agent to the outside world. Done via sysctl
+		// rather than entrypoint because /proc/sys is read-only without it.
+		Sysctls: map[string]string{
+			"net.ipv6.conf.all.forwarding": "1",
+		},
 	}
+
+	_, _, _, _, _, firewallIP6, _ := sandboxnet.SubnetFromHash(s.hash)
 
 	// Create on isolated network only (no port publishing needed).
 	networkSettings := &dockernet.NetworkingConfig{
@@ -312,6 +329,7 @@ func (s *Stack) createFirewall(ctx context.Context) error {
 			networkName: {
 				IPAMConfig: &dockernet.EndpointIPAMConfig{
 					IPv4Address: firewallIP,
+					IPv6Address: firewallIP6,
 				},
 			},
 		},
@@ -330,7 +348,7 @@ func (s *Stack) createProxy(ctx context.Context) error {
 	proxyName := sandbox.ResourceName(s.hash, sandbox.SuffixProxy)
 	networkName := sandbox.ResourceName(s.hash, sandbox.SuffixNet)
 
-	_, _, _, agentIP := sandboxnet.SubnetFromHash(s.hash)
+	_, _, _, agentIP, _, _, _ := sandboxnet.SubnetFromHash(s.hash)
 
 	imageTag, err := firewall.EnsureProxyImage(ctx, s.cli, "")
 	if err != nil {

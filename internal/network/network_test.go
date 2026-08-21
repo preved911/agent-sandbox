@@ -19,8 +19,8 @@ func TestNetworkName(t *testing.T) {
 }
 
 func TestSubnetFromHash(t *testing.T) {
-	// a1b2c3d4 → a1=161, b2=178 → 10.161.178.0/24
-	subnet, gw, fw, agent := SubnetFromHash("a1b2c3d4")
+	// a1b2c3d4 → a1=161, b2=178 → 10.161.178.0/24, fda1:b200::/64
+	subnet, gw, fw, agent, subnet6, fw6, agent6 := SubnetFromHash("a1b2c3d4")
 
 	if subnet != "10.161.178.0/24" {
 		t.Errorf("subnet: got %q, want 10.161.178.0/24", subnet)
@@ -34,20 +34,35 @@ func TestSubnetFromHash(t *testing.T) {
 	if agent != "10.161.178.10" {
 		t.Errorf("agent IP: got %q, want 10.161.178.10", agent)
 	}
+	if subnet6 != "fda1:b200::/64" {
+		t.Errorf("subnet6: got %q, want fda1:b200::/64", subnet6)
+	}
+	if fw6 != "fda1:b200::2" {
+		t.Errorf("firewall IPv6: got %q, want fda1:b200::2", fw6)
+	}
+	if agent6 != "fda1:b200::a" {
+		t.Errorf("agent IPv6: got %q, want fda1:b200::a", agent6)
+	}
 }
 
 func TestSubnetFromHash_Different(t *testing.T) {
-	s1, _, _, _ := SubnetFromHash("aabbccdd")
-	s2, _, _, _ := SubnetFromHash("00112233")
+	s1, _, _, _, s1v6, _, _ := SubnetFromHash("aabbccdd")
+	s2, _, _, _, s2v6, _, _ := SubnetFromHash("00112233")
 	if s1 == s2 {
-		t.Errorf("different hashes should produce different subnets: both got %q", s1)
+		t.Errorf("different hashes should produce different IPv4 subnets: both got %q", s1)
+	}
+	if s1v6 == s2v6 {
+		t.Errorf("different hashes should produce different IPv6 subnets: both got %q", s1v6)
 	}
 }
 
 func TestSubnetFromHash_Deterministic(t *testing.T) {
-	s1, _, _, _ := SubnetFromHash("deadbeef")
-	s2, _, _, _ := SubnetFromHash("deadbeef")
+	s1, _, _, _, s1v6, _, _ := SubnetFromHash("deadbeef")
+	s2, _, _, _, s2v6, _, _ := SubnetFromHash("deadbeef")
 	if s1 != s2 {
-		t.Errorf("same hash should produce same subnet: %q vs %q", s1, s2)
+		t.Errorf("same hash should produce same IPv4 subnet: %q vs %q", s1, s2)
+	}
+	if s1v6 != s2v6 {
+		t.Errorf("same hash should produce same IPv6 subnet: %q vs %q", s1v6, s2v6)
 	}
 }

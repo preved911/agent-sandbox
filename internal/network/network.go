@@ -8,28 +8,60 @@ import (
 	"strconv"
 
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
+	dockernet "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
 	"github.com/preved911/agent-sandbox/internal/sandbox"
 )
 
-// SubnetFromHash derives a unique /24 subnet from the sandbox hash.
-// Returns subnet, gateway, firewall IP, and agent IP.
-// Gateway is 10.x.x.1 (will be added as secondary IP on the firewall).
-// Firewall primary IP is 10.x.x.2.
-// Uses the first 4 hex chars of the hash as two octets in the 10.x.x.0/24 range,
-// giving 65536 possible unique subnets per sandbox.
-func SubnetFromHash(hash string) (subnet, gateway, firewallIP, agentIP string) {
-	b1, _ := strconv.ParseInt(hash[0:2], 16, 64)
-	b2, _ := strconv.ParseInt(hash[2:4], 16, 64)
-	prefix := fmt.Sprintf("10.%d.%d", b1, b2)
-	return prefix + ".0/24", prefix + ".1", prefix + ".2", prefix + ".10"
+// SubnetFromHash derives a unique /24 IPv4 subnet and a unique /64 IPv6 ULA
+// subnet from the sandbox hash.
+//
+// IPv4: 10.<b1>.<b2>.0/24, gateway .1 (added as secondary IP on firewall),
+// firewall primary .2, agent .10.
+//
+// IPv6: fd<b1>:<b2>00::/64 (ULA, matches the fd00::/8 masquerade rule in
+// the firewall's nftables postrouting chain), firewall ::2, agent ::a.
+//
+// Uses the first 4 hex chars of the hash, giving 65536 possible unique
+// subnets per sandbox on each address family.
+func SubnetFromHash(hash string) (subnet, gateway, firewallIP, agentIP, subnet6, firewallIP6, agentIP6 string) {
+	b1 := hash[0:2]
+	b2 := hash[2:4]
+	b1i, _ := strconv.ParseInt(b1, 16, 64)
+	b2i, _ := strconv.ParseInt(b2, 16, 64)
+
+	prefix4 := fmt.Sprintf("10.%d.%d", b1i, b2i)
+	subnet = prefix4 + ".0/24"
+	gateway = prefix4 + ".1"
+	firewallIP = prefix4 + ".2"
+	agentIP = prefix4 + ".10"
+
+	// ULA /64: fd<b1>:<b2>00::/64
+	prefix6 := fmt.Sprintf("fd%s:%s00", b1, b2)
+	subnet6 = prefix6 + "::/64"
+	firewallIP6 = prefix6 + "::2"
+	agentIP6 = prefix6 + "::a"
+	return
+}
+
+// defaultBridgeIPv6 returns true when the Docker default bridge network has
+// IPv6 enabled.  Any error (e.g. the network doesn't exist) is treated as
+// "not supported" so sandbox creation can still proceed without IPv6.
+func defaultBridgeIPv6(ctx context.Context, cli *client.Client) bool {
+	resp, err := cli.NetworkInspect(ctx, "bridge", dockernet.InspectOptions{})
+	if err != nil {
+		return false
+	}
+	return resp.EnableIPv6
 }
 
 // Create creates an isolated Docker bridge network for the sandbox.
 // The network has no default gateway to the host bridge — the firewall
 // container provides the only path to external networks.
+//
+// IPv6 is enabled only when the Docker default bridge network has IPv6
+// enabled, so the sandbox mirrors the host's networking capabilities.
 //
 // Network name: agent-sandbox-<hash>-net
 //
@@ -37,8 +69,11 @@ func SubnetFromHash(hash string) (subnet, gateway, firewallIP, agentIP string) {
 func Create(ctx context.Context, cli *client.Client, hash string) (networkID string, err error) {
 	name := sandbox.ResourceName(hash, sandbox.SuffixNet)
 
+	// Probe whether Docker has IPv6 support enabled on the default bridge.
+	ipv6 := defaultBridgeIPv6(ctx, cli)
+
 	// Check if network already exists with correct subnet.
-	networks, err := cli.NetworkList(ctx, network.ListOptions{
+	networks, err := cli.NetworkList(ctx, dockernet.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("name", name)),
 	})
 	if err != nil {
@@ -47,7 +82,7 @@ func Create(ctx context.Context, cli *client.Client, hash string) (networkID str
 	for _, n := range networks {
 		if n.Name == name {
 			// Verify subnet matches. If not, remove and recreate.
-			if subnetOK, err := hasSubnet(ctx, cli, n.ID); err != nil {
+			if subnetOK, err := hasSubnet(ctx, cli, n.ID, ipv6); err != nil {
 				return "", fmt.Errorf("inspect network %s: %w", name, err)
 			} else if !subnetOK {
 				fmt.Printf("Network %s has wrong subnet, recreating...\n", name)
@@ -60,24 +95,30 @@ func Create(ctx context.Context, cli *client.Client, hash string) (networkID str
 		}
 	}
 
-	// Derive unique subnet from hash to avoid collisions with other Docker networks.
-	subnet, gateway, _, _ := SubnetFromHash(hash)
+	subnet, gateway, _, _, subnet6, _, _ := SubnetFromHash(hash)
 	_, ipNet, _ := net.ParseCIDR(subnet)
 
-	// Create bridge network with unique subnet.
-	// Gateway is set to the firewall IP so agent traffic routes through the firewall.
-	resp, err := cli.NetworkCreate(ctx, name, network.CreateOptions{
-		Driver: "bridge",
-		IPAM: &network.IPAM{
-			Config: []network.IPAMConfig{
-				{Subnet: ipNet.String(), Gateway: gateway},
-			},
+	ipamConfigs := []dockernet.IPAMConfig{
+		{Subnet: ipNet.String(), Gateway: gateway},
+	}
+	if ipv6 {
+		_, ipNet6, _ := net.ParseCIDR(subnet6)
+		ipamConfigs = append(ipamConfigs, dockernet.IPAMConfig{Subnet: ipNet6.String()})
+	}
+
+	opts := dockernet.CreateOptions{
+		Driver:     "bridge",
+		EnableIPv6: &ipv6,
+		IPAM: &dockernet.IPAM{
+			Config: ipamConfigs,
 		},
 		Labels: map[string]string{
 			sandbox.Label:     "true",
 			sandbox.LabelName: name,
 		},
-	})
+	}
+
+	resp, err := cli.NetworkCreate(ctx, name, opts)
 	if err != nil {
 		return "", fmt.Errorf("create network %s: %w", name, err)
 	}
@@ -85,9 +126,10 @@ func Create(ctx context.Context, cli *client.Client, hash string) (networkID str
 	return resp.ID, nil
 }
 
-// hasSubnet checks if a network has the required subnet and correct Internal flag.
-func hasSubnet(ctx context.Context, cli *client.Client, networkID string) (bool, error) {
-	resp, err := cli.NetworkInspect(ctx, networkID, network.InspectOptions{})
+// hasSubnet checks if an existing network has the required subnets and is not
+// Internal.  When ipv6 is true, the IPv6 subnet must also be present.
+func hasSubnet(ctx context.Context, cli *client.Client, networkID string, ipv6 bool) (bool, error) {
+	resp, err := cli.NetworkInspect(ctx, networkID, dockernet.InspectOptions{})
 	if err != nil {
 		return false, err
 	}
@@ -95,31 +137,48 @@ func hasSubnet(ctx context.Context, cli *client.Client, networkID string) (bool,
 	if resp.Internal {
 		return false, nil
 	}
-	// Extract hash from network name to derive expected subnet.
+	// Extract hash from network name to derive expected subnets.
 	// Network name format: agent-sandbox-<hash>-net
 	name := resp.Name
 	const prefix = "agent-sandbox-"
 	const suffix = "-net"
-	if len(name) > len(prefix)+len(suffix) {
-		hash := name[len(prefix) : len(name)-len(suffix)]
-		expected, _, _, _ := SubnetFromHash(hash)
-		_, required, err := net.ParseCIDR(expected)
-		if err != nil {
-			return false, err
+	if len(name) <= len(prefix)+len(suffix) {
+		return false, nil
+	}
+	hash := name[len(prefix) : len(name)-len(suffix)]
+	expected, _, _, _, expected6, _, _ := SubnetFromHash(hash)
+	_, required, err := net.ParseCIDR(expected)
+	if err != nil {
+		return false, err
+	}
+
+	foundV4, foundV6 := false, false
+	for _, cfg := range resp.IPAM.Config {
+		if cfg.Subnet == "" {
+			continue
 		}
-		for _, cfg := range resp.IPAM.Config {
-			if cfg.Subnet != "" {
-				_, actual, err := net.ParseCIDR(cfg.Subnet)
-				if err != nil {
-					continue
-				}
-				if actual.String() == required.String() {
-					return true, nil
-				}
+		_, actual, err := net.ParseCIDR(cfg.Subnet)
+		if err != nil {
+			continue
+		}
+		if actual.String() == required.String() {
+			foundV4 = true
+		}
+		if ipv6 {
+			_, required6, err := net.ParseCIDR(expected6)
+			if err == nil && actual.String() == required6.String() {
+				foundV6 = true
 			}
 		}
 	}
-	return false, nil
+
+	if !foundV4 {
+		return false, nil
+	}
+	if ipv6 && !foundV6 {
+		return false, nil
+	}
+	return true, nil
 }
 
 // Remove removes the isolated network by hash.
@@ -131,7 +190,7 @@ func Remove(ctx context.Context, cli *client.Client, hash string) error {
 // Exists checks if the network exists.
 func Exists(ctx context.Context, cli *client.Client, hash string) (bool, error) {
 	name := sandbox.ResourceName(hash, sandbox.SuffixNet)
-	networks, err := cli.NetworkList(ctx, network.ListOptions{
+	networks, err := cli.NetworkList(ctx, dockernet.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("name", name)),
 	})
 	if err != nil {
@@ -150,7 +209,7 @@ func Exists(ctx context.Context, cli *client.Client, hash string) (bool, error) 
 // The host-side proxy goroutines listen on this IP so containers can reach them.
 func GatewayIP(ctx context.Context, cli *client.Client, hash string) (string, error) {
 	name := sandbox.ResourceName(hash, sandbox.SuffixNet)
-	resp, err := cli.NetworkInspect(ctx, name, network.InspectOptions{})
+	resp, err := cli.NetworkInspect(ctx, name, dockernet.InspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("inspect network %s: %w", name, err)
 	}
