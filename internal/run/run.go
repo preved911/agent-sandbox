@@ -25,7 +25,7 @@ import (
 // The container is created on the isolated network with a fixed IP.
 func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, hash, path string) error {
 	// Derive unique IPs from hash.
-	_, _, firewallIP, agentIP := sandboxnet.SubnetFromHash(hash)
+	_, _, firewallIP, agentIP, _, firewallIP6, agentIP6 := sandboxnet.SubnetFromHash(hash)
 
 	envSlice := make([]string, 0, len(cfg.Run.Env))
 	for k, v := range cfg.Run.Env {
@@ -103,11 +103,13 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 			networkName: {
 				IPAMConfig: &dockernet.EndpointIPAMConfig{
 					IPv4Address: agentIP,
+					IPv6Address: agentIP6,
 				},
-				// Route all agent traffic through the firewall.
-				// Without this, Docker defaults to the bridge gateway (10.x.x.1)
-				// which bypasses the firewall's nftables rules.
-				Gateway: firewallIP,
+				// Route all agent traffic (IPv4 and IPv6) through the firewall.
+				// Without this, Docker defaults to the bridge gateway which
+				// bypasses the firewall's nftables rules.
+				Gateway:     firewallIP,
+				IPv6Gateway: firewallIP6,
 			},
 		},
 	}
@@ -125,7 +127,7 @@ func Create(ctx context.Context, cli *client.Client, cfg *config.Config, image, 
 // ContainerStart directly instead.
 func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, name, hash string) (*Result, error) {
 	// Derive unique IPs from hash.
-	_, _, firewallIP, agentIP := sandboxnet.SubnetFromHash(hash)
+	_, _, firewallIP, agentIP, _, firewallIP6, agentIP6 := sandboxnet.SubnetFromHash(hash)
 
 	envSlice := make([]string, 0, len(cfg.Run.Env))
 	for k, v := range cfg.Run.Env {
@@ -188,8 +190,10 @@ func Start(ctx context.Context, cli *client.Client, cfg *config.Config, image, n
 			networkName: {
 				IPAMConfig: &dockernet.EndpointIPAMConfig{
 					IPv4Address: agentIP,
+					IPv6Address: agentIP6,
 				},
-				Gateway: firewallIP,
+				Gateway:     firewallIP,
+				IPv6Gateway: firewallIP6,
 			},
 		},
 	}

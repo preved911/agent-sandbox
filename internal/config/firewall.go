@@ -37,7 +37,12 @@ type FirewallConfig struct {
 // DNSConfig holds DNS resolver configuration.
 type DNSConfig struct {
 	// Upstream is the list of upstream DNS servers to forward queries to.
-	// If empty, defaults to 1.1.1.1 and 8.8.8.8.
+	// Entries may be plain IPs or hostnames ("1.1.1.1") for plain DNS on
+	// port 53, or include an explicit scheme to control the protocol:
+	//   "tls://1.1.1.1"   — DNS over TLS (DoT), port 853
+	//   "dns://1.1.1.1"   — plain DNS, port 53 (explicit)
+	//   "https://1.1.1.1" — DNS over HTTPS (DoH)
+	// If empty, defaults to ["1.1.1.1", "8.8.8.8"] (plain DNS, port 53).
 	Upstream []string `yaml:"upstream,omitempty"`
 }
 
